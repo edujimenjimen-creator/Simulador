@@ -74,26 +74,26 @@ with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
       3,
       3,
       3,
-      3,  # 00:00 - 04:00
+      3,
       0,
       0,
       0,
-      0,  # 05:00 - 08:00
+      0,
       8,
       19,
       9,
-      9,  # 09:00 - 12:00
+      9,
       2,
-      2,  # 13:00 - 14:00
-      0,  # 15:00
+      2,
+      0,
       3,
       7,
       12,
       4,
-      1,  # 16:00 - 20:00 (20:00h Última Carga)
+      1,
       0,
       0,
-      0,  # 21:00 - 23:00
+      0,
   ]
   tiendas_por_hora = []
   for h in range(24):
@@ -145,7 +145,7 @@ stock_inicial_lunes = stock_objetivo_sabado
 # 3. MOTOR PROACTIVO
 # ==========================================
 df_completo_ajustado = []
-rangos_produccion = []  # Para guardar inicio y fin por día
+hitos_produccion = []  # Para registrar las marcas visuales de inicio y fin
 stock_actual_00h = stock_inicial_lunes
 
 for dia_idx, dia in enumerate(dias_semana):
@@ -232,20 +232,40 @@ for dia_idx, dia in enumerate(dias_semana):
       if not apagado:
         break
 
-  # Detectar hora de inicio y fin de producción activa del día
-  horas_con_prod = [i for i, p in enumerate(produccion_h) if p > 0]
-  if horas_con_prod:
-    h_inicio = horas_con_prod[0]
-    h_fin = horas_con_prod[-1]
-    rangos_produccion.append({
-        "dia": dia,
-        "inicio": f"{dia[:3]} {horas_24[h_inicio]}",
-        "fin_aprox": f"{dia[:3]} {horas_24[min(h_fin+1, 23)]}",
-    })
-
   produccion_acum = stock_actual_00h + np.cumsum(produccion_h)
   buffer_muelle = produccion_acum - demanda_acum
   horas_adelanto = np.round(buffer_muelle / vel_maquina, 2)
+
+  # Detectar hora exacta de inicio y fin de producción para los cuadros de texto
+    horas_activas = [i for i, p in enumerate(produccion_h) if p > 0]
+  if horas_activas:
+    h_ini = horas_activas[0]
+    h_fin = horas_activas[-1]
+
+    # Guardar hito de inicio
+    hitos_produccion.append({
+        "tipo": "INICIO",
+        "eje_x": f"{dia[:3]} {horas_24[h_ini]}",
+        "y_val": produccion_acum[h_ini],
+        "texto": (
+            f"<b>INICIO PROD {horas_24[h_ini]}</b><br>Buffer:"
+            f" {int(buffer_muelle[h_ini]):,}".replace(",", ".")
+            + " pks"
+        ),
+    })
+
+    # Guardar hito de fin (a la hora siguiente o cierre del bloque activo)
+    h_fin_idx = min(h_fin + 1, 23)
+    hitos_produccion.append({
+        "tipo": "FIN",
+        "eje_x": f"{dia[:3]} {horas_24[h_fin_idx]}",
+        "y_val": produccion_acum[h_fin_idx],
+        "texto": (
+            f"<b>FIN PROD {horas_24[h_fin_idx]}</b><br>Buffer:"
+            f" {int(buffer_muelle[h_fin_idx]):,}".replace(",", ".")
+            + " pks"
+        ),
+    })
 
   for h_idx in range(24):
     df_completo_ajustado.append({
@@ -340,18 +360,29 @@ fig.add_hline(
     annotation_position="top right",
 )
 
-# Marcar las franjas de producción activa con un fondo suave (verde claro translúcido)
-for rango in rangos_produccion:
-  fig.add_vrect(
-      x0=rango["inicio"],
-      x1=rango["fin_aprox"],
-      fillcolor="rgba(44, 160, 44, 0.07)",
-      layer="below",
-      line_width=0,
-      annotation_text=f"Prod. {rango['dia'][:3]}",
-      annotation_position="top left",
-      annotation_font_size=9,
-      annotation_font_color="gray",
+# Añadir los cuadros de anotación de Inicio y Fin de Producción
+for hito in hitos_produccion:
+  is_fin = hito["tipo"] == "FIN"
+  fig.add_annotation(
+      x=hito["eje_x"],
+      y=hito["y_val"],
+      text=hito["texto"],
+      showarrow=True,
+      arrowhead=2,
+      arrowsize=1,
+      arrowwidth=1.5,
+      arrowcolor="#d62728" if is_fin else "#2ca02c",
+      ax=0,
+      ay=-45 if is_fin else 45,
+      bgcolor="white",
+      bordercolor="#d62728" if is_fin else "#2ca02c",
+      borderwidth=1.5,
+      borderpad=4,
+      font=dict(
+          size=10, color="#d62728" if is_fin else "#2ca02c"
+      ),
+      row=1,
+      col=1,
   )
 
 # Divisores verticales por día para mayor claridad visual
