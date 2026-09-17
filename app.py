@@ -321,18 +321,45 @@ fig.add_trace(
     col=1,
 )
 
-# Panel Inferior: Horas de Adelanto con etiquetas de datos visibles
+# Panel Inferior: Horas de Adelanto (Etiquetas SOLO en picos, valles y extremos)
+y_vals = df_plot["Adelanto_Horas"].values
+textos_filtrados = []
+for i in range(len(y_vals)):
+  val = y_vals[i]
+  # Condición para mostrar etiqueta: Es un pico local, un valle local, o está cerca del techo/suelo
+  es_pico = (
+      0 < i < len(y_vals) - 1
+      and y_vals[i] >= y_vals[i - 1]
+      and y_vals[i] >= y_vals[i + 1]
+  )
+  es_valle = (
+      0 < i < len(y_vals) - 1
+      and y_vals[i] <= y_vals[i - 1]
+      and y_vals[i] <= y_vals[i + 1]
+  )
+  cerca_limites = (
+      val >= adelanto_max_estandar - 0.2 or val <= objetivo_horas + 0.3
+  )
+
+  if es_pico or es_valle or cerca_limites or i == 0 or i == len(y_vals) - 1:
+    textos_filtrados.append(f"{val:.1f}h")
+  else:
+    textos_filtrados.append("")
+
 fig.add_trace(
     go.Scatter(
         x=df_plot["Eje_X"],
         y=df_plot["Adelanto_Horas"],
         name="Horas de Adelanto",
         mode="lines+markers+text",
-        text=[f"{val:.1f}h" for val in df_plot["Adelanto_Horas"]],
+        text=textos_filtrados,
         textposition="top center",
-        textfont=dict(size=8, color="#1f77b4"),
+        textfont=dict(size=9, color="#1f77b4"),
         line=dict(color="#1f77b4", width=2),
-        marker=dict(size=4),
+        marker=dict(
+            size=[6 if t != "" else 2 for t in textos_filtrados],
+            color="#1f77b4",
+        ),
         hovertemplate="<b>%{x}</b><br>Colchón: %{y:.2f} h<extra></extra>",
     ),
     row=2,
@@ -385,7 +412,7 @@ for hito in hitos_produccion:
       col=1,
   )
 
-# Añadir los nombres de los días de la semana dentro de la gráfica superior (a las 12:00 de cada día)
+# Nombres de los días de la semana dentro de la gráfica superior
 max_y_picks = max(df_plot["Demanda_Acum"].max(), df_plot["Prod_Acum"].max())
 for i_dia, dia in enumerate(dias_semana):
   idx_medio_dia = i_dia * 24 + 12
