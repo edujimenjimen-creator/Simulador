@@ -321,13 +321,18 @@ fig.add_trace(
     col=1,
 )
 
-# Panel Inferior: Horas de Adelanto
+# Panel Inferior: Horas de Adelanto con etiquetas de datos visibles
 fig.add_trace(
     go.Scatter(
         x=df_plot["Eje_X"],
         y=df_plot["Adelanto_Horas"],
         name="Horas de Adelanto",
+        mode="lines+markers+text",
+        text=[f"{val:.1f}h" for val in df_plot["Adelanto_Horas"]],
+        textposition="top center",
+        textfont=dict(size=8, color="#1f77b4"),
         line=dict(color="#1f77b4", width=2),
+        marker=dict(size=4),
         hovertemplate="<b>%{x}</b><br>Colchón: %{y:.2f} h<extra></extra>",
     ),
     row=2,
@@ -357,7 +362,7 @@ fig.add_hline(
     annotation_position="top right",
 )
 
-# Cuadros de anotación de Inicio y Fin anclados estrictamente al Panel Superior
+# Cuadros de anotación de Inicio y Fin anclados al Panel Superior
 for hito in hitos_produccion:
   is_fin = hito["tipo"] == "FIN"
   fig.add_annotation(
@@ -380,6 +385,25 @@ for hito in hitos_produccion:
       col=1,
   )
 
+# Añadir los nombres de los días de la semana dentro de la gráfica superior (a las 12:00 de cada día)
+max_y_picks = max(df_plot["Demanda_Acum"].max(), df_plot["Prod_Acum"].max())
+for i_dia, dia in enumerate(dias_semana):
+  idx_medio_dia = i_dia * 24 + 12
+  x_dia_val = df_plot["Eje_X"].iloc[idx_medio_dia]
+  fig.add_annotation(
+      x=x_dia_val,
+      y=max_y_picks * 0.94,
+      text=f"<b>{dia.upper()}</b>",
+      showarrow=False,
+      font=dict(size=11, color="#444444"),
+      bgcolor="rgba(255, 255, 255, 0.85)",
+      bordercolor="rgba(150, 150, 150, 0.4)",
+      borderwidth=1,
+      borderpad=4,
+      row=1,
+      col=1,
+  )
+
 # Divisores verticales por día
 for i_dia, dia in enumerate(dias_semana):
   if i_dia > 0:
@@ -392,12 +416,14 @@ for i_dia, dia in enumerate(dias_semana):
         line_width=1.2,
     )
 
-# Configuración del Layout de Plotly y control de marcas en el Eje X para evitar saturación
-ticks_cada_n_horas = 3  # Muestra una etiqueta cada 3 horas para limpieza visual
-x_ticks_vals = [df_plot["Eje_X"].iloc[i] for i in range(0, len(df_plot), ticks_cada_n_horas)]
+# Configuración del Layout de Plotly y control de marcas en el Eje X
+ticks_cada_n_horas = 3
+x_ticks_vals = [
+    df_plot["Eje_X"].iloc[i] for i in range(0, len(df_plot), ticks_cada_n_horas)
+]
 
 fig.update_layout(
-    height=750,
+    height=780,
     template="plotly_white",
     hovermode="x unified",
     legend=dict(
