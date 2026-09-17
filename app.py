@@ -8,7 +8,7 @@ import streamlit as st
 # 0. CONFIGURACIÓN DE PÁGINA STREAMLIT
 # ==========================================
 st.set_page_config(page_title="Simulador semanal", layout="wide")
-st.title("🏭 OPM Guadix: Panel de Planificación Semanal Optimizada")
+st.title("🏭 Simulador Semanal")
 
 # ==========================================
 # 1. PARÁMETROS CONFIGURABLES (VÍA SIDEBAR)
