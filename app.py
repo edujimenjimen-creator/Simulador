@@ -1,8 +1,8 @@
-import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import streamlit as st
 
 # ==========================================
 # 0. CONFIGURACIÓN DE PÁGINA STREAMLIT
@@ -145,8 +145,7 @@ stock_inicial_lunes = stock_objetivo_sabado
 # 3. MOTOR PROACTIVO
 # ==========================================
 df_completo_ajustado = []
-info_paradas = []
-info_arranques = []
+rangos_produccion = []  # Para guardar inicio y fin por día
 stock_actual_00h = stock_inicial_lunes
 
 for dia_idx, dia in enumerate(dias_semana):
@@ -233,13 +232,20 @@ for dia_idx, dia in enumerate(dias_semana):
       if not apagado:
         break
 
+  # Detectar hora de inicio y fin de producción activa del día
+  horas_con_prod = [i for i, p in enumerate(produccion_h) if p > 0]
+  if horas_con_prod:
+    h_inicio = horas_con_prod[0]
+    h_fin = horas_con_prod[-1]
+    rangos_produccion.append({
+        "dia": dia,
+        "inicio": f"{dia[:3]} {horas_24[h_inicio]}",
+        "fin_aprox": f"{dia[:3]} {horas_24[min(h_fin+1, 23)]}",
+    })
+
   produccion_acum = stock_actual_00h + np.cumsum(produccion_h)
   buffer_muelle = produccion_acum - demanda_acum
   horas_adelanto = np.round(buffer_muelle / vel_maquina, 2)
-
-  horas_con_prod = [i for i, p in enumerate(produccion_h) if p > 0]
-  ultima_hora_prod = horas_con_prod[-1] if horas_con_prod else 0
-  primera_hora_prod = horas_con_prod[0] if horas_con_prod else 0
 
   for h_idx in range(24):
     df_completo_ajustado.append({
@@ -249,6 +255,7 @@ for dia_idx, dia in enumerate(dias_semana):
         "Demanda_Acum": demanda_acum[h_idx],
         "Prod_Acum": produccion_acum[h_idx],
         "Adelanto_Horas": horas_adelanto[h_idx],
+        "Produciendo": 1 if produccion_h[h_idx] > 0 else 0,
     })
 
   stock_actual_00h = produccion_acum[23] - demanda_total_real
@@ -332,6 +339,20 @@ fig.add_hline(
     annotation_text=f"Techo Máximo ({adelanto_max_estandar}h)",
     annotation_position="top right",
 )
+
+# Marcar las franjas de producción activa con un fondo suave (verde claro translúcido)
+for rango in rangos_produccion:
+  fig.add_vrect(
+      x0=rango["inicio"],
+      x1=rango["fin_aprox"],
+      fillcolor="rgba(44, 160, 44, 0.07)",
+      layer="below",
+      line_width=0,
+      annotation_text=f"Prod. {rango['dia'][:3]}",
+      annotation_position="top left",
+      annotation_font_size=9,
+      annotation_font_color="gray",
+  )
 
 # Divisores verticales por día para mayor claridad visual
 for i_dia, dia in enumerate(dias_semana):
