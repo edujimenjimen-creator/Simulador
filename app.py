@@ -321,12 +321,29 @@ fig.add_trace(
     col=1,
 )
 
-# Panel Inferior: Horas de Adelanto (Etiquetas SOLO en picos, valles y extremos)
+# Panel Inferior: Línea base de horas de adelanto
+fig.add_trace(
+    go.Scatter(
+        x=df_plot["Eje_X"],
+        y=df_plot["Adelanto_Horas"],
+        name="Horas de Adelanto",
+        mode="lines",
+        line=dict(color="#1f77b4", width=2),
+        hoverinfo="skip",
+    ),
+    row=2,
+    col=1,
+)
+
+# Separación de puntos destacados (picos, valles, límites) en Verde (cumplen) y Rojo (incumplen)
+green_x, green_y, green_text = [], [], []
+red_x, red_y, red_text = [], [], []
+
 y_vals = df_plot["Adelanto_Horas"].values
-textos_filtrados = []
+x_vals = df_plot["Eje_X"].values
+
 for i in range(len(y_vals)):
   val = y_vals[i]
-  # Condición para mostrar etiqueta: Es un pico local, un valle local, o está cerca del techo/suelo
   es_pico = (
       0 < i < len(y_vals) - 1
       and y_vals[i] >= y_vals[i - 1]
@@ -342,29 +359,53 @@ for i in range(len(y_vals)):
   )
 
   if es_pico or es_valle or cerca_limites or i == 0 or i == len(y_vals) - 1:
-    textos_filtrados.append(f"{val:.1f}h")
-  else:
-    textos_filtrados.append("")
+    cumple_rango = objetivo_horas <= val <= adelanto_max_estandar
+    if cumple_rango:
+      green_x.append(x_vals[i])
+      green_y.append(val)
+      green_text.append(f"{val:.1f}h")
+    else:
+      red_x.append(x_vals[i])
+      red_y.append(val)
+      red_text.append(f"{val:.1f}h")
 
-fig.add_trace(
-    go.Scatter(
-        x=df_plot["Eje_X"],
-        y=df_plot["Adelanto_Horas"],
-        name="Horas de Adelanto",
-        mode="lines+markers+text",
-        text=textos_filtrados,
-        textposition="top center",
-        textfont=dict(size=9, color="#1f77b4"),
-        line=dict(color="#1f77b4", width=2),
-        marker=dict(
-            size=[6 if t != "" else 2 for t in textos_filtrados],
-            color="#1f77b4",
-        ),
-        hovertemplate="<b>%{x}</b><br>Colchón: %{y:.2f} h<extra></extra>",
-    ),
-    row=2,
-    col=1,
-)
+# Traza para puntos y etiquetas en Rango (Verde)
+if green_x:
+  fig.add_trace(
+      go.Scatter(
+          x=green_x,
+          y=green_y,
+          mode="markers+text",
+          text=green_text,
+          textposition="top center",
+          textfont=dict(size=9, color="#2ca02c"),
+          marker=dict(size=6, color="#2ca02c"),
+          name="En Rango",
+          showlegend=False,
+          hovertemplate="<b>%{x}</b><br>Colchón: %{y:.2f} h<extra></extra>",
+      ),
+      row=2,
+      col=1,
+  )
+
+# Traza para puntos y etiquetas Fuera de Rango (Rojo)
+if red_x:
+  fig.add_trace(
+      go.Scatter(
+          x=red_x,
+          y=red_y,
+          mode="markers+text",
+          text=red_text,
+          textposition="top center",
+          textfont=dict(size=9, color="#d62728"),
+          marker=dict(size=8, color="#d62728"),
+          name="Fuera de Rango",
+          showlegend=False,
+          hovertemplate="<b>%{x}</b><br>Colchón: %{y:.2f} h<extra></extra>",
+      ),
+      row=2,
+      col=1,
+  )
 
 # Líneas de referencia (Piso y Techo)
 fig.add_hline(
