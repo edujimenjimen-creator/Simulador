@@ -7,8 +7,8 @@ import streamlit as st
 # ==========================================
 # 0. CONFIGURACIÓN DE PÁGINA STREAMLIT
 # ==========================================
-st.set_page_config(page_title="Simulador semanal", layout="wide")
-st.title("🏭 Simulador Semanal")
+st.set_page_config(page_title="OPM Guadix - Planificación Semanal", layout="wide")
+st.title("🏭 OPM Guadix: Panel de Planificación Semanal Optimizada")
 
 # ==========================================
 # 1. PARÁMETROS CONFIGURABLES (VÍA SIDEBAR)
@@ -145,7 +145,7 @@ stock_inicial_lunes = stock_objetivo_sabado
 # 3. MOTOR PROACTIVO
 # ==========================================
 df_completo_ajustado = []
-hitos_produccion = []  # Para registrar las marcas visuales de inicio y fin
+hitos_produccion = []
 stock_actual_00h = stock_inicial_lunes
 
 for dia_idx, dia in enumerate(dias_semana):
@@ -236,13 +236,11 @@ for dia_idx, dia in enumerate(dias_semana):
   buffer_muelle = produccion_acum - demanda_acum
   horas_adelanto = np.round(buffer_muelle / vel_maquina, 2)
 
-  # Detectar hora exacta de inicio y fin de producción para los cuadros de texto
   horas_activas = [i for i, p in enumerate(produccion_h) if p > 0]
   if horas_activas:
     h_ini = horas_activas[0]
     h_fin = horas_activas[-1]
 
-    # Guardar hito de inicio
     hitos_produccion.append({
         "tipo": "INICIO",
         "eje_x": f"{dia[:3]} {horas_24[h_ini]}",
@@ -254,7 +252,6 @@ for dia_idx, dia in enumerate(dias_semana):
         ),
     })
 
-    # Guardar hito de fin
     h_fin_idx = min(h_fin + 1, 23)
     hitos_produccion.append({
         "tipo": "FIN",
@@ -360,7 +357,7 @@ fig.add_hline(
     annotation_position="top right",
 )
 
-# Añadir los cuadros de anotación de Inicio y Fin de Producción
+# Cuadros de anotación de Inicio y Fin anclados estrictamente al Panel Superior
 for hito in hitos_produccion:
   is_fin = hito["tipo"] == "FIN"
   fig.add_annotation(
@@ -383,7 +380,7 @@ for hito in hitos_produccion:
       col=1,
   )
 
-# Divisores verticales por día para mayor claridad visual
+# Divisores verticales por día
 for i_dia, dia in enumerate(dias_semana):
   if i_dia > 0:
     base_idx = i_dia * 24
@@ -395,7 +392,10 @@ for i_dia, dia in enumerate(dias_semana):
         line_width=1.2,
     )
 
-# Configuración del Layout de Plotly
+# Configuración del Layout de Plotly y control de marcas en el Eje X para evitar saturación
+ticks_cada_n_horas = 3  # Muestra una etiqueta cada 3 horas para limpieza visual
+x_ticks_vals = [df_plot["Eje_X"].iloc[i] for i in range(0, len(df_plot), ticks_cada_n_horas)]
+
 fig.update_layout(
     height=750,
     template="plotly_white",
@@ -411,7 +411,12 @@ fig.update_layout(
 )
 
 fig.update_xaxes(
-    title_text="Día y Hora", row=2, col=1, tickangle=0, showgrid=True
+    tickvals=x_ticks_vals,
+    ticktext=x_ticks_vals,
+    tickangle=-45,
+    showgrid=True,
+    row=2,
+    col=1,
 )
 fig.update_yaxes(title_text="Picks Acumulados", row=1, col=1, showgrid=True)
 fig.update_yaxes(title_text="Horas de Colchón", row=2, col=1, showgrid=True)
