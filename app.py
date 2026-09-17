@@ -237,7 +237,7 @@ for dia_idx, dia in enumerate(dias_semana):
   horas_adelanto = np.round(buffer_muelle / vel_maquina, 2)
 
   # Detectar hora exacta de inicio y fin de producción para los cuadros de texto
-    horas_activas = [i for i, p in enumerate(produccion_h) if p > 0]
+  horas_activas = [i for i, p in enumerate(produccion_h) if p > 0]
   if horas_activas:
     h_ini = horas_activas[0]
     h_fin = horas_activas[-1]
@@ -254,7 +254,7 @@ for dia_idx, dia in enumerate(dias_semana):
         ),
     })
 
-    # Guardar hito de fin (a la hora siguiente o cierre del bloque activo)
+    # Guardar hito de fin
     h_fin_idx = min(h_fin + 1, 23)
     hitos_produccion.append({
         "tipo": "FIN",
@@ -378,9 +378,7 @@ for hito in hitos_produccion:
       bordercolor="#d62728" if is_fin else "#2ca02c",
       borderwidth=1.5,
       borderpad=4,
-      font=dict(
-          size=10, color="#d62728" if is_fin else "#2ca02c"
-      ),
+      font=dict(size=10, color="#d62728" if is_fin else "#2ca02c"),
       row=1,
       col=1,
   )
