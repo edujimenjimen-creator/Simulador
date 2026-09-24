@@ -273,15 +273,12 @@ for dia_idx, dia in enumerate(dias_semana):
         turnos.append((inicio_actual, prev))
 
         for h_ini, h_fin in turnos:
+            # Etiqueta limpia y compacta solo con INICIO + hora
             hitos_produccion.append({
                 "tipo": "INICIO",
                 "eje_x": f"{dia[:3]} {horas_24[h_ini]}",
                 "y_val": produccion_acum[h_ini],
-                "texto": (
-                    f"<b>INICIO PROD {horas_24[h_ini]}</b><br>Buffer:"
-                    f" {int(buffer_muelle[h_ini]):,}".replace(",", ".")
-                    + " pks"
-                ),
+                "texto": f"INICIO {horas_24[h_ini]}",
             })
 
             if h_fin == 23:
@@ -293,14 +290,12 @@ for dia_idx, dia in enumerate(dias_semana):
                 eje_x_fin = f"{dia[:3]} {horas_24[h_fin + 1]}"
                 y_val_fin = produccion_acum[h_fin + 1]
 
+            # Etiqueta limpia y compacta solo con FIN + hora
             hitos_produccion.append({
                 "tipo": "FIN",
                 "eje_x": eje_x_fin,
                 "y_val": y_val_fin,
-                "texto": (
-                    f"<b>FIN PROD {etiqueta_fin}</b><br>Buffer:"
-                    f" {int(buffer_muelle[h_fin]):,}".replace(",", ".") + " pks"
-                ),
+                "texto": f"FIN {etiqueta_fin}",
             })
 
     for h_idx in range(24):
@@ -477,6 +472,7 @@ fig.add_hline(
     annotation_position="top right",
 )
 
+# Anotaciones limpias y minimalistas (solo Inicio/Fin + Hora)
 for hito in hitos_produccion:
     is_fin = hito["tipo"] == "FIN"
     fig.add_annotation(
@@ -485,16 +481,16 @@ for hito in hitos_produccion:
         text=hito["texto"],
         showarrow=True,
         arrowhead=2,
-        arrowsize=1,
-        arrowwidth=1.5,
+        arrowsize=0.8,
+        arrowwidth=1.2,
         arrowcolor="#d62728" if is_fin else "#238b45",
         ax=0,
-        ay=-45 if is_fin else 45,
+        ay=-28 if is_fin else 28,
         bgcolor="white",
         bordercolor="#d62728" if is_fin else "#238b45",
-        borderwidth=1.5,
-        borderpad=4,
-        font=dict(size=10, color="#d62728" if is_fin else "#1b5e20"),
+        borderwidth=1,
+        borderpad=3,
+        font=dict(size=9, color="#d62728" if is_fin else "#1b5e20"),
         row=1,
         col=1,
     )
