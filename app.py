@@ -140,7 +140,7 @@ for _ in range(5):
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR DE BLOQUES CONTINUOS ESTRICTOS (144H)
+# 3. MOTOR DE BLOQUES CONTINUOS BLINDADOS (144H)
 # ==========================================
 demanda_h_144 = []
 for dia in dias_semana:
@@ -155,75 +155,58 @@ target_demanda_144 = np.copy(demanda_acum_144).astype(float)
 for t in range(120, 144):
     target_demanda_144[t] += stock_objetivo_sabado * ((t - 119) / 24.0)
 
-produccion_h_144 = [0] * 144
+# NUEVA LÓGICA: Partimos de producción continua completa y apagamos por exceso de techo
+# o encendemos por defecto de suelo en grandes bloques (sin micro-cortes)
+produccion_h_144 = [vel_maquina] * 144
 
-# FASE 1: Activar producción para garantizar el piso mínimo sin saltarse el techo
-for _ in range(1000):
+# Ajustar por piso mínimo (si hay alguna hora por debajo del piso, abrimos el bloque de producción diario correspondiente)
+for _ in range(200):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
     adel = buf / vel_maquina
-
+    min_val = np.min(adel)
+    
+    if min_val >= objetivo_horas:
+        break
+        
     min_idx = np.argmin(adel)
-    if adel[min_idx] >= objetivo_horas:
-        break
-
-    # Buscar la hora más cercana sin producir y encenderla si no supera el techo
-    encendido = False
-    for h in range(min_idx, -1, -1):
-        if produccion_h_144[h] == 0 and adel[h] < adelanto_max_estandar:
+    # Encontrar el bloque del día de esa hora crítica y encenderlo entero
+    dia_critico = min_idx // 24
+    inicio_bloque = dia_critico * 24
+    fin_bloque = (dia_critico + 1) * 24
+    
+    # Encender todo el día si estaba apagado
+    for h in range(inicio_bloque, fin_bloque):
+        produccion_h_144[h] = vel_maquina
+        
+    # Si aun así falta, expandir al día anterior
+    if min_val < objetivo_horas and dia_critico > 0:
+        for h in range((dia_critico - 1) * 24, dia_critico * 24):
             produccion_h_144[h] = vel_maquina
-            encendido = True
-            break
-    if not encendido:
-        for h in range(min_idx, 144):
-            if produccion_h_144[h] == 0 and adel[h] < adelanto_max_estandar:
-                produccion_h_144[h] = vel_maquina
-                encendido = True
-                break
-    if not encendido:
-        break
 
-# FASE 2: CONSOLIDACIÓN ABSOLUTA DE TURNOS (Cero micro-cortes)
-# Si hay producción activa separada por menos de 4 horas de inactividad, se funden en un solo bloque continuo.
-for h in range(2, 142):
-    if produccion_h_144[h] == 0:
-        # Si las horas anterior y posterior están produciendo, cerramos el hueco obligatoriamente
-        if produccion_h_144[h - 1] == vel_maquina and produccion_h_144[h + 1] == vel_maquina:
-            p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
-            buf_test = p_acum_test - target_demanda_144
-            adel_test = buf_test / vel_maquina
-            if adel_test[h] <= adelanto_max_estandar:
-                produccion_h_144[h] = vel_maquina
-
-# FASE 3: Aplicar restricción dura de Techo Máximo (Apagar solo por exceso de techo)
-for _ in range(1000):
+# Ajustar por techo máximo estricto: Si se supera el techo, apagamos horas sobrantes de forma continua por los extremos
+for _ in range(500):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
     adel = buf / vel_maquina
-
+    
     max_idx = np.argmax(adel)
     if adel[max_idx] <= adelanto_max_estandar + 0.001:
         break
-
+        
+    # Apagar la hora con mayor exceso asegurando que no rompemos el piso mínimo en ninguna otra hora
     if produccion_h_144[max_idx] == vel_maquina:
         produccion_h_144[max_idx] = 0
         p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
         buf_test = p_acum_test - target_demanda_144
         adel_test = buf_test / vel_maquina
-
-        if min(adel_test) >= objetivo_horas - 0.001:
-            continue
-        else:
+        
+        if np.min(adel_test) < objetivo_horas - 0.001:
+            # Si apagar esto viola el piso, deshacemos y paramos
             produccion_h_144[max_idx] = vel_maquina
             break
     else:
-        # Buscar la hora productiva más cercana con mayor exceso
-        horas_exceso = [h for h in range(144) if adel[h] > adelanto_max_estandar and produccion_h_144[h] == vel_maquina]
-        if horas_exceso:
-            h_a_apagar = max(horas_exceso, key=lambda x: adel[x])
-            produccion_h_144[h_a_apagar] = 0
-        else:
-            break
+        break
 
 # ==========================================
 # 4. CONSTRUCCIÓN DE DATOS DIARIOS Y HITOS
