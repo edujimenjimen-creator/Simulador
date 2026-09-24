@@ -140,7 +140,7 @@ for _ in range(5):
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR PROACTIVO GLOBAL 144H (CON TECHO ESTRICTO)
+# 3. MOTOR PROACTIVO GLOBAL 144H (TECHO ESTRICTO CORREGIDO)
 # ==========================================
 demanda_h_144 = []
 for dia in dias_semana:
@@ -151,14 +151,13 @@ for dia in dias_semana:
 
 demanda_acum_144 = np.cumsum(demanda_h_144)
 
-# Curva objetivo para evaluación continua en 144 horas
 target_demanda_144 = np.copy(demanda_acum_144).astype(float)
 for t in range(120, 144):
     target_demanda_144[t] += stock_objetivo_sabado * ((t - 119) / 24.0)
 
 produccion_h_144 = [0] * 144
 
-# FASE 1: Garantizar Piso Inviolable (4.0h) a lo largo de las 144 horas
+# FASE 1: Garantizar Piso Inviolable (4.0h)
 for _ in range(600):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
@@ -183,17 +182,18 @@ for _ in range(600):
     if not encendido:
         break
 
-# FASE 2: Control de Techo Estricto (Hard Constraint)
-for _ in range(800):
+# FASE 2: Control de Techo Estricto y Forzado (Hard Constraint Riguroso)
+for _ in range(1500):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
     adel = buf / vel_maquina
 
     max_idx = np.argmax(adel)
-    if adel[max_idx] <= adelanto_max_estandar + 0.01:
+    if adel[max_idx] <= adelanto_max_estandar + 0.001:
         break
 
     apagado = False
+    # Intentar apagar horas de producción cerca o antes del pico para bajarlo
     for h in range(max_idx, -1, -1):
         if produccion_h_144[h] == vel_maquina:
             produccion_h_144[h] = 0
@@ -201,13 +201,15 @@ for _ in range(800):
             buf_test = p_acum_test - target_demanda_144
             adel_test = buf_test / vel_maquina
 
+            # Validar que al apagar no rompemos el piso mínimo en ninguna parte
             if min(adel_test) >= objetivo_horas:
                 apagado = True
                 break
             else:
-                produccion_h_144[h] = vel_maquina
+                produccion_h_144[h] = vel_maquina  # Revertir si rompe el piso
 
     if not apagado:
+        # Si no se pudo antes del pico, buscar después
         for h in range(max_idx + 1, 144):
             if produccion_h_144[h] == vel_maquina:
                 produccion_h_144[h] = 0
@@ -223,7 +225,7 @@ for _ in range(800):
         if not apagado:
             break
 
-# FASE 3: Relleno de micro-huecos seguros
+# FASE 3: Relleno de micro-huecos seguros (sin rebasar el techo)
 for h in range(1, 143):
     if (
         produccion_h_144[h - 1] == vel_maquina
@@ -235,7 +237,7 @@ for h in range(1, 143):
         buf_test = p_acum_test - target_demanda_144
         adel_test = buf_test / vel_maquina
         if (
-            max(adel_test) > adelanto_max_estandar + 0.01
+            max(adel_test) > adelanto_max_estandar + 0.001
             or min(adel_test) < objetivo_horas
         ):
             produccion_h_144[h] = 0
@@ -273,7 +275,6 @@ for dia_idx, dia in enumerate(dias_semana):
         turnos.append((inicio_actual, prev))
 
         for h_ini, h_fin in turnos:
-            # Etiqueta limpia y compacta solo con INICIO + hora
             hitos_produccion.append({
                 "tipo": "INICIO",
                 "eje_x": f"{dia[:3]} {horas_24[h_ini]}",
@@ -290,7 +291,6 @@ for dia_idx, dia in enumerate(dias_semana):
                 eje_x_fin = f"{dia[:3]} {horas_24[h_fin + 1]}"
                 y_val_fin = produccion_acum[h_fin + 1]
 
-            # Etiqueta limpia y compacta solo con FIN + hora
             hitos_produccion.append({
                 "tipo": "FIN",
                 "eje_x": eje_x_fin,
@@ -472,7 +472,6 @@ fig.add_hline(
     annotation_position="top right",
 )
 
-# Anotaciones limpias y minimalistas (solo Inicio/Fin + Hora)
 for hito in hitos_produccion:
     is_fin = hito["tipo"] == "FIN"
     fig.add_annotation(
