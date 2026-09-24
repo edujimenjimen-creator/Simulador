@@ -124,23 +124,10 @@ cargas_madrugada_lunes = sum(demanda_lunes_h[:6])
 cargas_6h_lunes = sum(demanda_lunes_h[6:12])
 stock_objetivo_sabado = cargas_madrugada_lunes + cargas_6h_lunes
 
-for _ in range(5):
-    prod_h_test = [vel_maquina for i in range(24)]
-    prod_acum_test = stock_objetivo_sabado + np.cumsum(prod_h_test)
-    buffer_test = prod_acum_test - demanda_acum_lunes
-    adelanto_test = buffer_test / vel_maquina
-    min_adelanto_lunes = min(adelanto_test)
-
-    if min_adelanto_lunes < objetivo_horas:
-        deficit = (objetivo_horas - min_adelanto_lunes) * vel_maquina
-        stock_objetivo_sabado += int(np.ceil(deficit))
-    else:
-        break
-
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR DE BLOQUES CONTINUOS BLINDADOS (144H)
+# 3. MOTOR DE CONTROL ESTRICTO DE TECHO (144H)
 # ==========================================
 demanda_h_144 = []
 for dia in dias_semana:
@@ -155,58 +142,47 @@ target_demanda_144 = np.copy(demanda_acum_144).astype(float)
 for t in range(120, 144):
     target_demanda_144[t] += stock_objetivo_sabado * ((t - 119) / 24.0)
 
-# NUEVA LÓGICA: Partimos de producción continua completa y apagamos por exceso de techo
-# o encendemos por defecto de suelo en grandes bloques (sin micro-cortes)
-produccion_h_144 = [vel_maquina] * 144
+# LÓGICA INDUSTRIAL BLINDADA:
+# 1. Partimos de un estado donde la máquina solo produce cuando el colchón está por debajo del techo y necesita reponerse.
+# 2. Jamás se permite que el colchón supere estrictamente el "adelanto_max_estandar".
+produccion_h_144 = [0] * 144
 
-# Ajustar por piso mínimo (si hay alguna hora por debajo del piso, abrimos el bloque de producción diario correspondiente)
-for _ in range(200):
-    p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
-    buf = p_acum - target_demanda_144
-    adel = buf / vel_maquina
-    min_val = np.min(adel)
+# Simulamos hora a hora de forma estrictamente cronológica
+stock_actual = stock_inicial_lunes
+for t in range(144):
+    # Calcular cuál sería el colchón si decidimos producir en esta hora t
+    stock_si_produce = stock_actual - demanda_h_144[t] + vel_maquina
+    colchon_si_produce = (stock_si_produce - target_demanda_144[t]) / vel_maquina
     
-    if min_val >= objetivo_horas:
-        break
-        
-    min_idx = np.argmin(adel)
-    # Encontrar el bloque del día de esa hora crítica y encenderlo entero
-    dia_critico = min_idx // 24
-    inicio_bloque = dia_critico * 24
-    fin_bloque = (dia_critico + 1) * 24
-    
-    # Encender todo el día si estaba apagado
-    for h in range(inicio_bloque, fin_bloque):
-        produccion_h_144[h] = vel_maquina
-        
-    # Si aun así falta, expandir al día anterior
-    if min_val < objetivo_horas and dia_critico > 0:
-        for h in range((dia_critico - 1) * 24, dia_critico * 24):
-            produccion_h_144[h] = vel_maquina
-
-# Ajustar por techo máximo estricto: Si se supera el techo, apagamos horas sobrantes de forma continua por los extremos
-for _ in range(500):
-    p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
-    buf = p_acum - target_demanda_144
-    adel = buf / vel_maquina
-    
-    max_idx = np.argmax(adel)
-    if adel[max_idx] <= adelanto_max_estandar + 0.001:
-        break
-        
-    # Apagar la hora con mayor exceso asegurando que no rompemos el piso mínimo en ninguna otra hora
-    if produccion_h_144[max_idx] == vel_maquina:
-        produccion_h_144[max_idx] = 0
-        p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
-        buf_test = p_acum_test - target_demanda_144
-        adel_test = buf_test / vel_maquina
-        
-        if np.min(adel_test) < objetivo_horas - 0.001:
-            # Si apagar esto viola el piso, deshacemos y paramos
-            produccion_h_144[max_idx] = vel_maquina
-            break
+    # Si al producir superamos el techo máximo, la máquina SE APAGA obligatoriamente
+    if colchon_si_produce > adelanto_max_estandar:
+        produccion_h_144[t] = 0
+        stock_actual = stock_actual - demanda_h_144[t] # Sin producción en esta hora
     else:
-        break
+        # Si estamos por debajo del techo, evaluamos si necesitamos producir para no hundirnos por debajo del piso
+        stock_si_no_produce = stock_actual - demanda_h_144[t]
+        colchon_si_no_produce = (stock_si_no_produce - target_demanda_144[t]) / vel_maquina
+        
+        if colchon_si_no_produce < objetivo_horas:
+            produccion_h_144[t] = vel_maquina
+            stock_actual = stock_si_produce
+        else:
+            # Si estamos en un rango seguro entre piso y techo, mantenemos el estado anterior o encendemos de forma fluida
+            produccion_h_144[t] = vel_maquina
+            stock_actual = stock_si_produce
+
+# Segunda pasada de limpieza: eliminar paradas de 1 o 2 horas (micro-cortes) 
+# asegurando que NUNCA se supere el techo al rellenarlas.
+for _ in range(3):
+    for h in range(1, 143):
+        if produccion_h_144[h] == 0:
+            if produccion_h_144[h-1] == vel_maquina and produccion_h_144[h+1] == vel_maquina:
+                # Comprobar si al rellenar este hueco se supera el techo en algún punto futuro cercano
+                p_acum_test = stock_inicial_lunes + np.cumsum([vel_maquina if i == h else p for i, p in enumerate(produccion_h_144)])
+                buf_test = p_acum_test - target_demanda_144
+                adel_test = buf_test / vel_maquina
+                if np.max(adel_test) <= adelanto_max_estandar:
+                    produccion_h_144[h] = vel_maquina
 
 # ==========================================
 # 4. CONSTRUCCIÓN DE DATOS DIARIOS Y HITOS
