@@ -140,7 +140,7 @@ for _ in range(5):
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR PROACTIVO 24/7 (UNIFICADO PARA TODA LA SEMANA)
+# 3. MOTOR PROACTIVO 24/7 (CON REGLA DE ARRANQUE PARA SÁBADO)
 # ==========================================
 df_completo_ajustado = []
 hitos_produccion = []
@@ -154,13 +154,13 @@ for dia_idx, dia in enumerate(dias_semana):
     demanda_acum = np.cumsum(demanda_h)
     demanda_total_real = demanda_acum[-1]
 
-    produccion_h = [0] * 24
-
-    # Si es sábado, necesitamos asegurar que al final del día se alcance el stock objetivo para el lunes
+    # Inicialización de producción por defecto
     if dia == "Sábado":
-        # Añadimos una meta virtual al acumulado del sábado para que la optimización sepa que debe acumular el stock del lunes
+        # El sábado arranca totalmente encendido para garantizar que no sufra déficit de colchón al inicio
+        produccion_h = [vel_maquina] * 24
         demanda_acum_objetivo = [d + stock_objetivo_sabado for d in demanda_acum]
     else:
+        produccion_h = [0] * 24
         demanda_acum_objetivo = demanda_acum
 
     # FASE 1: Garantizar el piso mínimo de horas de colchón en todas las horas del día
@@ -200,6 +200,10 @@ for dia_idx, dia in enumerate(dias_semana):
 
         apagado = False
         for h in range(24):
+            # Para el sábado, protegemos las primeras horas de la madrugada para evitar caídas bruscas
+            if dia == "Sábado" and h < 6:
+                continue
+
             if produccion_h[h] == vel_maquina:
                 produccion_h[h] = 0
                 p_acum_test = stock_actual_00h + np.cumsum(produccion_h)
@@ -257,7 +261,6 @@ for dia_idx, dia in enumerate(dias_semana):
             "Produciendo": 1 if produccion_h[h_idx] > 0 else 0,
         })
 
-    # Actualizamos el stock para el día siguiente restando la demanda real del día completado
     stock_actual_00h = produccion_acum[23] - demanda_total_real
 
 df_plot = pd.DataFrame(df_completo_ajustado)
