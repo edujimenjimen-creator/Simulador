@@ -140,7 +140,7 @@ for _ in range(5):
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR DE CONTINUIDAD ESTRICTA (144H)
+# 3. MOTOR DE BLOQUES CONTINUOS ESTRICTOS (144H)
 # ==========================================
 demanda_h_144 = []
 for dia in dias_semana:
@@ -157,8 +157,8 @@ for t in range(120, 144):
 
 produccion_h_144 = [0] * 144
 
-# FASE 1: Garantizar el piso inviolable activando bloques necesarios
-for _ in range(1500):
+# FASE 1: Activar producción para garantizar el piso mínimo sin saltarse el techo
+for _ in range(1000):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
     adel = buf / vel_maquina
@@ -167,6 +167,7 @@ for _ in range(1500):
     if adel[min_idx] >= objetivo_horas:
         break
 
+    # Buscar la hora más cercana sin producir y encenderla si no supera el techo
     encendido = False
     for h in range(min_idx, -1, -1):
         if produccion_h_144[h] == 0 and adel[h] < adelanto_max_estandar:
@@ -182,25 +183,20 @@ for _ in range(1500):
     if not encendido:
         break
 
-# FASE 2: ELIMINACIÓN ABSOLUTA DE MICRO-PARADAS (Fusión de bloques continuos)
-# Si hay un hueco inactivo de hasta 6 horas rodeado de producción, se une obligatoriamente
-# siempre y cuando no rebase el techo máximo permitido.
-for _ in range(3):
-    for h in range(1, 143):
-        if produccion_h_144[h] == 0:
-            # Buscar hacia atrás y hacia adelante si hay producción activa cercana
-            prev_activa = any(produccion_h_144[max(0, h-6):h])
-            sig_activa = any(produccion_h_144[h+1:min(144, h+7)])
-            if prev_activa and sig_activa:
-                # Verificar simulación de techo
-                p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
-                buf_test = p_acum_test - target_demanda_144
-                adel_test = buf_test / vel_maquina
-                if adel_test[h] <= adelanto_max_estandar:
-                    produccion_h_144[h] = vel_maquina
+# FASE 2: CONSOLIDACIÓN ABSOLUTA DE TURNOS (Cero micro-cortes)
+# Si hay producción activa separada por menos de 4 horas de inactividad, se funden en un solo bloque continuo.
+for h in range(2, 142):
+    if produccion_h_144[h] == 0:
+        # Si las horas anterior y posterior están produciendo, cerramos el hueco obligatoriamente
+        if produccion_h_144[h - 1] == vel_maquina and produccion_h_144[h + 1] == vel_maquina:
+            p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
+            buf_test = p_acum_test - target_demanda_144
+            adel_test = buf_test / vel_maquina
+            if adel_test[h] <= adelanto_max_estandar:
+                produccion_h_144[h] = vel_maquina
 
-# FASE 3: Control estricto de Techo (Solo se detiene si supera el techo)
-for _ in range(2000):
+# FASE 3: Aplicar restricción dura de Techo Máximo (Apagar solo por exceso de techo)
+for _ in range(1000):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
     adel = buf / vel_maquina
@@ -209,15 +205,8 @@ for _ in range(2000):
     if adel[max_idx] <= adelanto_max_estandar + 0.001:
         break
 
-    horas_exceso = [
-        h for h in range(144) if adel[h] > adelanto_max_estandar and produccion_h_144[h] == vel_maquina
-    ]
-
-    if horas_exceso:
-        # Apagamos por los extremos del bloque de producción para mantener la continuidad interior
-        h_a_apagar = max(horas_exceso, key=lambda x: adel[x])
-        produccion_h_144[h_a_apagar] = 0
-
+    if produccion_h_144[max_idx] == vel_maquina:
+        produccion_h_144[max_idx] = 0
         p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
         buf_test = p_acum_test - target_demanda_144
         adel_test = buf_test / vel_maquina
@@ -225,10 +214,16 @@ for _ in range(2000):
         if min(adel_test) >= objetivo_horas - 0.001:
             continue
         else:
-            produccion_h_144[h_a_apagar] = vel_maquina
+            produccion_h_144[max_idx] = vel_maquina
             break
     else:
-        break
+        # Buscar la hora productiva más cercana con mayor exceso
+        horas_exceso = [h for h in range(144) if adel[h] > adelanto_max_estandar and produccion_h_144[h] == vel_maquina]
+        if horas_exceso:
+            h_a_apagar = max(horas_exceso, key=lambda x: adel[x])
+            produccion_h_144[h_a_apagar] = 0
+        else:
+            break
 
 # ==========================================
 # 4. CONSTRUCCIÓN DE DATOS DIARIOS Y HITOS
@@ -363,7 +358,6 @@ ultimo_y_etiquetado = -999
 
 for i in range(len(y_vals)):
     val = y_vals[i]
-    
     es_pico = (0 < i < len(y_vals) - 1) and (y_vals[i] > y_vals[i - 1]) and (y_vals[i] > y_vals[i + 1])
     es_valle = (0 < i < len(y_vals) - 1) and (y_vals[i] < y_vals[i - 1]) and (y_vals[i] < y_vals[i + 1])
     es_extremo_global = (i == 0 or i == len(y_vals) - 1)
