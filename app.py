@@ -26,7 +26,7 @@ objetivo_horas = st.sidebar.number_input(
     "Piso Inviolable Mínimo (Horas)",
     min_value=1.0,
     max_value=12.0,
-    value=4.0,
+    value=6.0,
     step=0.5,
 )
 adelanto_max_estandar = st.sidebar.number_input(
@@ -140,7 +140,7 @@ for _ in range(5):
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR PROACTIVO GLOBAL 144H (TECHO ESTRICTO CORREGIDO)
+# 3. MOTOR INTELIGENTE 144H (ARRANQUE BASADO EN MÁRGENES Y SUELO)
 # ==========================================
 demanda_h_144 = []
 for dia in dias_semana:
@@ -157,8 +157,8 @@ for t in range(120, 144):
 
 produccion_h_144 = [0] * 144
 
-# FASE 1: Garantizar Piso Inviolable (4.0h)
-for _ in range(600):
+# FASE 1: Garantizar estrictamente el piso mínimo (ej. 6.0h) encendiendo por necesidad real
+for _ in range(1000):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
     adel = buf / vel_maquina
@@ -168,6 +168,7 @@ for _ in range(600):
         break
 
     encendido = False
+    # Buscar encender preferiblemente en horas previas al punto crítico de bajada
     for h in range(min_idx, -1, -1):
         if produccion_h_144[h] == 0:
             produccion_h_144[h] = vel_maquina
@@ -182,7 +183,7 @@ for _ in range(600):
     if not encendido:
         break
 
-# FASE 2: Control de Techo Estricto y Forzado (Hard Constraint Riguroso)
+# FASE 2: Respetar estrictamente el techo máximo (Hard Constraint)
 for _ in range(1500):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
@@ -193,7 +194,6 @@ for _ in range(1500):
         break
 
     apagado = False
-    # Intentar apagar horas de producción cerca o antes del pico para bajarlo
     for h in range(max_idx, -1, -1):
         if produccion_h_144[h] == vel_maquina:
             produccion_h_144[h] = 0
@@ -201,15 +201,13 @@ for _ in range(1500):
             buf_test = p_acum_test - target_demanda_144
             adel_test = buf_test / vel_maquina
 
-            # Validar que al apagar no rompemos el piso mínimo en ninguna parte
             if min(adel_test) >= objetivo_horas:
                 apagado = True
                 break
             else:
-                produccion_h_144[h] = vel_maquina  # Revertir si rompe el piso
+                produccion_h_144[h] = vel_maquina
 
     if not apagado:
-        # Si no se pudo antes del pico, buscar después
         for h in range(max_idx + 1, 144):
             if produccion_h_144[h] == vel_maquina:
                 produccion_h_144[h] = 0
@@ -224,23 +222,6 @@ for _ in range(1500):
                     produccion_h_144[h] = vel_maquina
         if not apagado:
             break
-
-# FASE 3: Relleno de micro-huecos seguros (sin rebasar el techo)
-for h in range(1, 143):
-    if (
-        produccion_h_144[h - 1] == vel_maquina
-        and produccion_h_144[h] == 0
-        and produccion_h_144[h + 1] == vel_maquina
-    ):
-        produccion_h_144[h] = vel_maquina
-        p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
-        buf_test = p_acum_test - target_demanda_144
-        adel_test = buf_test / vel_maquina
-        if (
-            max(adel_test) > adelanto_max_estandar + 0.001
-            or min(adel_test) < objetivo_horas
-        ):
-            produccion_h_144[h] = 0
 
 # ==========================================
 # 4. CONSTRUCCIÓN DE DATOS DIARIOS Y HITOS
