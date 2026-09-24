@@ -140,7 +140,7 @@ for _ in range(5):
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR INTELIGENTE 144H (ARRANQUE BASADO EN MÁRGENES Y SUELO)
+# 3. MOTOR INTELIGENTE 144H (JERARQUÍA: SUELO ABSOLUTO + EXCEPCIÓN DE TECHO)
 # ==========================================
 demanda_h_144 = []
 for dia in dias_semana:
@@ -157,8 +157,10 @@ for t in range(120, 144):
 
 produccion_h_144 = [0] * 144
 
-# FASE 1: Garantizar estrictamente el piso mínimo (ej. 6.0h) encendiendo por necesidad real
-for _ in range(1000):
+# FASE 1: Prioridad Absoluta -> Garantizar el Suelo Inviolable (6.0h)
+# Si es estrictamente necesario para no bajar del suelo, la máquina se encenderá
+# aunque eso provoque rebasar temporalmente el techo (excepción justificada).
+for _ in range(1500):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
     adel = buf / vel_maquina
@@ -168,7 +170,6 @@ for _ in range(1000):
         break
 
     encendido = False
-    # Buscar encender preferiblemente en horas previas al punto crítico de bajada
     for h in range(min_idx, -1, -1):
         if produccion_h_144[h] == 0:
             produccion_h_144[h] = vel_maquina
@@ -183,45 +184,43 @@ for _ in range(1000):
     if not encendido:
         break
 
-# FASE 2: Respetar estrictamente el techo máximo (Hard Constraint)
-for _ in range(1500):
+# FASE 2: Mantenerse en la Zona Ideal (Entre Suelo y Techo)
+# Apagar producción sobrante SÓLO SI el mínimo de la semana se mantiene seguro a salvo del suelo.
+for _ in range(2000):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
     adel = buf / vel_maquina
 
     max_idx = np.argmax(adel)
+    # Si el punto más alto está por debajo del techo, ya estamos en la zona ideal
     if adel[max_idx] <= adelanto_max_estandar + 0.001:
         break
 
     apagado = False
-    for h in range(max_idx, -1, -1):
-        if produccion_h_144[h] == vel_maquina:
-            produccion_h_144[h] = 0
-            p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
-            buf_test = p_acum_test - target_demanda_144
-            adel_test = buf_test / vel_maquina
+    # Intentar apagar horas productivas que estén por encima del techo estándar
+    horas_por_encima = [
+        h for h in range(144) if adel[h] > adelanto_max_estandar and produccion_h_144[h] == vel_maquina
+    ]
+    
+    if horas_por_encima:
+        # Apagar desde el pico más alto hacia atrás
+        h_a_apagar = max(horas_por_encima, key=lambda x: adel[x])
+        produccion_h_144[h_a_apagar] = 0
 
-            if min(adel_test) >= objetivo_horas:
-                apagado = True
-                break
-            else:
-                produccion_h_144[h] = vel_maquina
+        # Validar si al apagar esta hora rompemos el suelo en algún sitio
+        p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
+        buf_test = p_acum_test - target_demanda_144
+        adel_test = buf_test / vel_maquina
 
-    if not apagado:
-        for h in range(max_idx + 1, 144):
-            if produccion_h_144[h] == vel_maquina:
-                produccion_h_144[h] = 0
-                p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
-                buf_test = p_acum_test - target_demanda_144
-                adel_test = buf_test / vel_maquina
-
-                if min(adel_test) >= objetivo_horas:
-                    apagado = True
-                    break
-                else:
-                    produccion_h_144[h] = vel_maquina
-        if not apagado:
+        if min(adel_test) >= objetivo_horas - 0.001:
+            apagado = True
+        else:
+            # ¡EXCEPCIÓN CRÍTICA ACTIVADA! Si apagar esto rompe el suelo, revertimos
+            # porque la regla de oro es que el suelo jamás se perfora.
+            produccion_h_144[h_a_apagar] = vel_maquina
             break
+    else:
+        break
 
 # ==========================================
 # 4. CONSTRUCCIÓN DE DATOS DIARIOS Y HITOS
@@ -304,8 +303,7 @@ fig = make_subplots(
     vertical_spacing=0.08,
     row_heights=[0.65, 0.35],
     subplot_titles=(
-        f"OPM GUADIX - Planificación Semanal Optimizada 24/7 (Piso"
-        f" {objetivo_horas}h)",
+        f"OPM GUADIX - Planificación Semanal Optimizada 24/7 (Piso {objetivo_horas}h)",
         "Horas de Colchón / Adelanto en Muelle",
     ),
 )
@@ -328,9 +326,7 @@ fig.add_trace(
         y=df_plot["Prod_Acum"],
         name="Producción Acumulada + Stock",
         line=dict(color="#2ca02c", width=2.5),
-        hovertemplate=(
-            "<b>%{x}</b><br>Producción + Stock: %{y:,.0f} pks<extra></extra>"
-        ),
+        hovertemplate="<b>%{x}</b><br>Producción + Stock: %{y:,.0f} pks<extra></extra>",
     ),
     row=1,
     col=1,
@@ -370,9 +366,7 @@ for i in range(len(y_vals)):
         and y_vals[i] <= y_vals[i - 1]
         and y_vals[i] <= y_vals[i + 1]
     )
-    cerca_limites = (
-        val >= adelanto_max_estandar - 0.2 or val <= objetivo_horas + 0.3
-    )
+    cerca_limites = val >= adelanto_max_estandar - 0.2 or val <= objetivo_horas + 0.3
 
     if es_pico or es_valle or cerca_limites or i == 0 or i == len(y_vals) - 1:
         texto_actual = f"{val:.1f}h"
@@ -423,7 +417,7 @@ if red_x:
             textposition="top center",
             textfont=dict(size=9, color="#d62728"),
             marker=dict(size=8, color="#d62728"),
-            name="Fuera de Rango",
+            name="Fuera de Rango (Excepción / Alerta)",
             showlegend=False,
             hovertemplate="<b>%{x}</b><br>Colchón: %{y:.2f} h<extra></extra>",
         ),
