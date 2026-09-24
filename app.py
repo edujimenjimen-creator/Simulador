@@ -140,7 +140,7 @@ for _ in range(5):
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR PROACTIVO 24/7 (CORREGIDO PARA TECHO)
+# 3. MOTOR PROACTIVO 24/7 (UNIFICADO PARA TODA LA SEMANA)
 # ==========================================
 df_completo_ajustado = []
 hitos_produccion = []
@@ -156,67 +156,66 @@ for dia_idx, dia in enumerate(dias_semana):
 
     produccion_h = [0] * 24
 
+    # Si es sábado, necesitamos asegurar que al final del día se alcance el stock objetivo para el lunes
     if dia == "Sábado":
-        for h in range(24):
-            p_test = list(produccion_h)
-            p_test[h] = vel_maquina
-            p_acum_test = stock_actual_00h + np.cumsum(p_test)
-            if p_acum_test[h] < demanda_total_real + stock_objetivo_sabado:
-                produccion_h[h] = vel_maquina
+        # Añadimos una meta virtual al acumulado del sábado para que la optimización sepa que debe acumular el stock del lunes
+        demanda_acum_objetivo = [d + stock_objetivo_sabado for d in demanda_acum]
     else:
-        # FASE 1: Garantizar el piso mínimo de horas de colchón
-        for _ in range(30):
-            p_acum = stock_actual_00h + np.cumsum(produccion_h)
-            buf = p_acum - demanda_acum
-            adel = buf / vel_maquina
+        demanda_acum_objetivo = demanda_acum
 
-            min_idx = np.argmin(adel)
-            if adel[min_idx] >= objetivo_horas:
+    # FASE 1: Garantizar el piso mínimo de horas de colchón en todas las horas del día
+    for _ in range(40):
+        p_acum = stock_actual_00h + np.cumsum(produccion_h)
+        buf = p_acum - demanda_acum_objetivo
+        adel = buf / vel_maquina
+
+        min_idx = np.argmin(adel)
+        if adel[min_idx] >= objetivo_horas:
+            break
+
+        encendido = False
+        for h in range(min_idx, -1, -1):
+            if produccion_h[h] == 0:
+                produccion_h[h] = vel_maquina
+                encendido = True
                 break
-
-            encendido = False
-            for h in range(min_idx, -1, -1):
+        if not encendido:
+            for h in range(min_idx, 24):
                 if produccion_h[h] == 0:
                     produccion_h[h] = vel_maquina
                     encendido = True
                     break
-            if not encendido:
-                for h in range(min_idx, 24):
-                    if produccion_h[h] == 0:
-                        produccion_h[h] = vel_maquina
-                        encendido = True
-                        break
-            if not encendido:
-                break
+        if not encendido:
+            break
 
-        # FASE 2: Respetar el techo máximo apagando horas excedentes (desde la madrugada)
-        for _ in range(30):
-            p_acum = stock_actual_00h + np.cumsum(produccion_h)
-            buf = p_acum - demanda_acum
-            adel = buf / vel_maquina
+    # FASE 2: Respetar el techo máximo apagando horas excedentes (desde la madrugada)
+    for _ in range(40):
+        p_acum = stock_actual_00h + np.cumsum(produccion_h)
+        buf = p_acum - demanda_acum_objetivo
+        adel = buf / vel_maquina
 
-            max_idx = np.argmax(adel)
-            if adel[max_idx] <= adelanto_max_estandar:
-                break
+        max_idx = np.argmax(adel)
+        if adel[max_idx] <= adelanto_max_estandar:
+            break
 
-            apagado = False
-            for h in range(24):
-                if produccion_h[h] == vel_maquina:
-                    produccion_h[h] = 0
-                    p_acum_test = stock_actual_00h + np.cumsum(produccion_h)
-                    buf_test = p_acum_test - demanda_acum
-                    adel_test = buf_test / vel_maquina
+        apagado = False
+        for h in range(24):
+            if produccion_h[h] == vel_maquina:
+                produccion_h[h] = 0
+                p_acum_test = stock_actual_00h + np.cumsum(produccion_h)
+                buf_test = p_acum_test - demanda_acum_objetivo
+                adel_test = buf_test / vel_maquina
 
-                    if min(adel_test) >= objetivo_horas:
-                        apagado = True
-                        break
-                    else:
-                        produccion_h[h] = vel_maquina
-            if not apagado:
-                break
+                if min(adel_test) >= objetivo_horas:
+                    apagado = True
+                    break
+                else:
+                    produccion_h[h] = vel_maquina
+        if not apagado:
+            break
 
     produccion_acum = stock_actual_00h + np.cumsum(produccion_h)
-    buffer_muelle = produccion_acum - demanda_acum
+    buffer_muelle = produccion_acum - demanda_acum_objetivo
     horas_adelanto = np.round(buffer_muelle / vel_maquina, 2)
 
     horas_activas = [i for i, p in enumerate(produccion_h) if p > 0]
@@ -258,6 +257,7 @@ for dia_idx, dia in enumerate(dias_semana):
             "Produciendo": 1 if produccion_h[h_idx] > 0 else 0,
         })
 
+    # Actualizamos el stock para el día siguiente restando la demanda real del día completado
     stock_actual_00h = produccion_acum[23] - demanda_total_real
 
 df_plot = pd.DataFrame(df_completo_ajustado)
