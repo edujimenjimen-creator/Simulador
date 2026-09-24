@@ -140,7 +140,7 @@ for _ in range(5):
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR INTELIGENTE 144H (SUELO Y TECHO ORGÁNICOS)
+# 3. MOTOR INTELIGENTE 144H (RESPETANDO TECHO Y SUELO)
 # ==========================================
 demanda_h_144 = []
 for dia in dias_semana:
@@ -157,7 +157,7 @@ for t in range(120, 144):
 
 produccion_h_144 = [0] * 144
 
-# FASE 1: Garantizar el Piso Inviolable (6.0h)
+# FASE 1: Garantizar el Piso Inviolable (6.0h) sin sobrepasar el techo innecesariamente
 for _ in range(1500):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
@@ -168,21 +168,22 @@ for _ in range(1500):
         break
 
     encendido = False
+    # Solo encender si la hora candidata está por debajo del techo configurado
     for h in range(min_idx, -1, -1):
-        if produccion_h_144[h] == 0:
+        if produccion_h_144[h] == 0 and adel[h] < adelanto_max_estandar:
             produccion_h_144[h] = vel_maquina
             encendido = True
             break
     if not encendido:
         for h in range(min_idx, 144):
-            if produccion_h_144[h] == 0:
+            if produccion_h_144[h] == 0 and adel[h] < adelanto_max_estandar:
                 produccion_h_144[h] = vel_maquina
                 encendido = True
                 break
     if not encendido:
         break
 
-# FASE 2: Controlar el Techo Máximo de forma orgánica
+# FASE 2: Eliminar producción en horas que rebasen el techo de forma injustificada
 for _ in range(2000):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
@@ -341,7 +342,6 @@ red_x, red_y, red_text = [], [], []
 y_vals = df_plot["Adelanto_Horas"].values
 x_vals = df_plot["Eje_X"].values
 
-# FILTRO LIMPIO: Solo picos y valles estrictos (se omiten mesetas y variaciones planas)
 ultimo_y_etiquetado = -999
 
 for i in range(len(y_vals)):
@@ -351,7 +351,6 @@ for i in range(len(y_vals)):
     es_valle = (0 < i < len(y_vals) - 1) and (y_vals[i] < y_vals[i - 1]) and (y_vals[i] < y_vals[i + 1])
     es_extremo_global = (i == 0 or i == len(y_vals) - 1)
 
-    # Exigir cambio de tendencia y evitar acumulación en tramos planos (diferencia mínima de 0.4h)
     if (es_pico or es_valle or es_extremo_global) and abs(val - ultimo_y_etiquetado) >= 0.4:
         texto_actual = f"{val:.1f}h"
         cumple_rango = objetivo_horas <= val <= adelanto_max_estandar
