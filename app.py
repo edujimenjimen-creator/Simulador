@@ -140,7 +140,7 @@ for _ in range(5):
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR PROACTIVO 24/7 (SÁBADO EXTENDIDO HASTA EL TECHO)
+# 3. MOTOR PROACTIVO 24/7 (GARANTÍA ABSOLUTA DE SUELO)
 # ==========================================
 df_completo_ajustado = []
 hitos_produccion = []
@@ -156,14 +156,15 @@ for dia_idx, dia in enumerate(dias_semana):
 
     if dia == "Sábado":
         demanda_acum_objetivo = [d + stock_objetivo_sabado for d in demanda_acum]
-        # Para el sábado, permitimos encender todas las horas posibles siempre que no superen el techo de 10h
         produccion_h = [vel_maquina] * 24
     else:
         demanda_acum_objetivo = demanda_acum
         produccion_h = [0] * 24
 
-        # FASE 1: Garantizar el piso mínimo de horas de colchón (Lunes a Viernes)
-        for _ in range(40):
+        # FASE 1: GARANTÍA INEXORABLE DEL SUELO MÍNIMO
+        # El sistema iterará y encenderá horas (empezando por las más cercanas al punto crítico)
+        # hasta que CUALQUIER hora de la semana cumpla estrictamente con el piso mínimo de horas.
+        for _ in range(60):
             p_acum = stock_actual_00h + np.cumsum(produccion_h)
             buf = p_acum - demanda_acum_objetivo
             adel = buf / vel_maquina
@@ -172,6 +173,7 @@ for dia_idx, dia in enumerate(dias_semana):
             if adel[min_idx] >= objetivo_horas:
                 break
 
+            # Buscar la hora apagada más cercana para encenderla y levantar el valle
             encendido = False
             for h in range(min_idx, -1, -1):
                 if produccion_h[h] == 0:
@@ -187,7 +189,7 @@ for dia_idx, dia in enumerate(dias_semana):
             if not encendido:
                 break
 
-        # FASE 2: Respetar el techo máximo apagando horas excedentes (Lunes a Viernes)
+        # FASE 2: RESPETAR EL TECHO MÁXIMO (Solo apaga si NO se vulnera el suelo mínimo)
         for _ in range(40):
             p_acum = stock_actual_00h + np.cumsum(produccion_h)
             buf = p_acum - demanda_acum_objetivo
@@ -205,29 +207,38 @@ for dia_idx, dia in enumerate(dias_semana):
                     buf_test = p_acum_test - demanda_acum_objetivo
                     adel_test = buf_test / vel_maquina
 
+                    # REGLA DE ORO: Solo permitimos apagar si el punto más bajo NO baja del piso mínimo
                     if min(adel_test) >= objetivo_horas:
                         apagado = True
                         break
                     else:
-                        produccion_h[h] = vel_maquina
+                        produccion_h[h] = vel_maquina  # Revertir si rompe el suelo
             if not apagado:
                 break
 
-    # FILTRO ESPECÍFICO PARA EL SÁBADO: Mantener producción activa mientras no rebase el techo de horas
+    # FILTRO ESPECÍFICO PARA EL SÁBADO
     if dia == "Sábado":
         for _ in range(40):
             p_acum = stock_actual_00h + np.cumsum(produccion_h)
             buf = p_acum - demanda_acum_objetivo
             adel = buf / vel_maquina
 
-            # Si alguna hora supera el techo máximo configurado, apagamos esa hora específica de producción
             max_idx = np.argmax(adel)
-            if adel[max_idx] > adelanto_max_estandar and produccion_h[max_idx] > 0:
-                produccion_h[max_idx] = 0
+            if adel[max_idx] > adelanto_max_estandar:
+                excedentes = [
+                    i for i, a in enumerate(adel) if a > adelanto_max_estandar
+                ]
+                if excedentes:
+                    h_a_apagar = excedentes[-1]
+                    if produccion_h[h_a_apagar] > 0:
+                        produccion_h[h_a_apagar] = 0
+                    else:
+                        break
+                else:
+                    break
             else:
                 break
 
-        # Además, aseguramos que la fase de arranque de madrugada no perfore el piso mínimo
         for _ in range(40):
             p_acum = stock_actual_00h + np.cumsum(produccion_h)
             buf = p_acum - demanda_acum_objetivo
@@ -235,7 +246,6 @@ for dia_idx, dia in enumerate(dias_semana):
 
             min_idx = np.argmin(adel)
             if adel[min_idx] < objetivo_horas:
-                # Si cae del piso, buscamos la hora más temprana sin producir y la encendemos
                 encendido = False
                 for h in range(min_idx, -1, -1):
                     if produccion_h[h] == 0:
