@@ -140,7 +140,7 @@ for _ in range(5):
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR PROACTIVO 24/7 (CON REGLA DE ARRANQUE PARA SÁBADO)
+# 3. MOTOR PROACTIVO 24/7 (SÁBADO EXTENDIDO HASTA EL TECHO)
 # ==========================================
 df_completo_ajustado = []
 hitos_produccion = []
@@ -154,69 +154,104 @@ for dia_idx, dia in enumerate(dias_semana):
     demanda_acum = np.cumsum(demanda_h)
     demanda_total_real = demanda_acum[-1]
 
-    # Inicialización de producción por defecto
     if dia == "Sábado":
-        # El sábado arranca totalmente encendido para garantizar que no sufra déficit de colchón al inicio
-        produccion_h = [vel_maquina] * 24
         demanda_acum_objetivo = [d + stock_objetivo_sabado for d in demanda_acum]
+        # Para el sábado, permitimos encender todas las horas posibles siempre que no superen el techo de 10h
+        produccion_h = [vel_maquina] * 24
     else:
-        produccion_h = [0] * 24
         demanda_acum_objetivo = demanda_acum
+        produccion_h = [0] * 24
 
-    # FASE 1: Garantizar el piso mínimo de horas de colchón en todas las horas del día
-    for _ in range(40):
-        p_acum = stock_actual_00h + np.cumsum(produccion_h)
-        buf = p_acum - demanda_acum_objetivo
-        adel = buf / vel_maquina
+        # FASE 1: Garantizar el piso mínimo de horas de colchón (Lunes a Viernes)
+        for _ in range(40):
+            p_acum = stock_actual_00h + np.cumsum(produccion_h)
+            buf = p_acum - demanda_acum_objetivo
+            adel = buf / vel_maquina
 
-        min_idx = np.argmin(adel)
-        if adel[min_idx] >= objetivo_horas:
-            break
-
-        encendido = False
-        for h in range(min_idx, -1, -1):
-            if produccion_h[h] == 0:
-                produccion_h[h] = vel_maquina
-                encendido = True
+            min_idx = np.argmin(adel)
+            if adel[min_idx] >= objetivo_horas:
                 break
-        if not encendido:
-            for h in range(min_idx, 24):
+
+            encendido = False
+            for h in range(min_idx, -1, -1):
                 if produccion_h[h] == 0:
                     produccion_h[h] = vel_maquina
                     encendido = True
                     break
-        if not encendido:
-            break
+            if not encendido:
+                for h in range(min_idx, 24):
+                    if produccion_h[h] == 0:
+                        produccion_h[h] = vel_maquina
+                        encendido = True
+                        break
+            if not encendido:
+                break
 
-    # FASE 2: Respetar el techo máximo apagando horas excedentes (desde la madrugada)
-    for _ in range(40):
-        p_acum = stock_actual_00h + np.cumsum(produccion_h)
-        buf = p_acum - demanda_acum_objetivo
-        adel = buf / vel_maquina
+        # FASE 2: Respetar el techo máximo apagando horas excedentes (Lunes a Viernes)
+        for _ in range(40):
+            p_acum = stock_actual_00h + np.cumsum(produccion_h)
+            buf = p_acum - demanda_acum_objetivo
+            adel = buf / vel_maquina
 
-        max_idx = np.argmax(adel)
-        if adel[max_idx] <= adelanto_max_estandar:
-            break
+            max_idx = np.argmax(adel)
+            if adel[max_idx] <= adelanto_max_estandar:
+                break
 
-        apagado = False
-        for h in range(24):
-            # Para el sábado, protegemos las primeras horas de la madrugada para evitar caídas bruscas
-            if dia == "Sábado" and h < 6:
-                continue
+            apagado = False
+            for h in range(24):
+                if produccion_h[h] == vel_maquina:
+                    produccion_h[h] = 0
+                    p_acum_test = stock_actual_00h + np.cumsum(produccion_h)
+                    buf_test = p_acum_test - demanda_acum_objetivo
+                    adel_test = buf_test / vel_maquina
 
-            if produccion_h[h] == vel_maquina:
-                produccion_h[h] = 0
-                p_acum_test = stock_actual_00h + np.cumsum(produccion_h)
-                buf_test = p_acum_test - demanda_acum_objetivo
-                adel_test = buf_test / vel_maquina
+                    if min(adel_test) >= objetivo_horas:
+                        apagado = True
+                        break
+                    else:
+                        produccion_h[h] = vel_maquina
+            if not apagado:
+                break
 
-                if min(adel_test) >= objetivo_horas:
-                    apagado = True
+    # FILTRO ESPECÍFICO PARA EL SÁBADO: Mantener producción activa mientras no rebase el techo de horas
+    if dia == "Sábado":
+        for _ in range(40):
+            p_acum = stock_actual_00h + np.cumsum(produccion_h)
+            buf = p_acum - demanda_acum_objetivo
+            adel = buf / vel_maquina
+
+            # Si alguna hora supera el techo máximo configurado, apagamos esa hora específica de producción
+            max_idx = np.argmax(adel)
+            if adel[max_idx] > adelanto_max_estandar and produccion_h[max_idx] > 0:
+                produccion_h[max_idx] = 0
+            else:
+                break
+
+        # Además, aseguramos que la fase de arranque de madrugada no perfore el piso mínimo
+        for _ in range(40):
+            p_acum = stock_actual_00h + np.cumsum(produccion_h)
+            buf = p_acum - demanda_acum_objetivo
+            adel = buf / vel_maquina
+
+            min_idx = np.argmin(adel)
+            if adel[min_idx] < objetivo_horas:
+                # Si cae del piso, buscamos la hora más temprana sin producir y la encendemos
+                encendido = False
+                for h in range(min_idx, -1, -1):
+                    if produccion_h[h] == 0:
+                        produccion_h[h] = vel_maquina
+                        encendido = True
+                        break
+                if not encendido:
+                    for h in range(min_idx, 24):
+                        if produccion_h[h] == 0:
+                            produccion_h[h] = vel_maquina
+                            encendido = True
+                            break
+                if not encendido:
                     break
-                else:
-                    produccion_h[h] = vel_maquina
-        if not apagado:
-            break
+            else:
+                break
 
     produccion_acum = stock_actual_00h + np.cumsum(produccion_h)
     buffer_muelle = produccion_acum - demanda_acum_objetivo
