@@ -140,7 +140,7 @@ for _ in range(5):
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR PROACTIVO GLOBAL 144H (LUNES A SÁBADO CONTINUO)
+# 3. MOTOR PROACTIVO GLOBAL 144H (CON TECHO ESTRICTO)
 # ==========================================
 demanda_h_144 = []
 for dia in dias_semana:
@@ -153,14 +153,13 @@ demanda_acum_144 = np.cumsum(demanda_h_144)
 
 # Curva objetivo para evaluación continua en 144 horas
 target_demanda_144 = np.copy(demanda_acum_144).astype(float)
-# En Sábado (de h=120 a h=143), la fábrica va acumulando el stock necesario para el Lunes
 for t in range(120, 144):
     target_demanda_144[t] += stock_objetivo_sabado * ((t - 119) / 24.0)
 
 produccion_h_144 = [0] * 144
 
 # FASE 1: Garantizar Piso Inviolable (4.0h) a lo largo de las 144 horas
-for _ in range(500):
+for _ in range(600):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
     adel = buf / vel_maquina
@@ -184,14 +183,14 @@ for _ in range(500):
     if not encendido:
         break
 
-# FASE 2: Control de Techo Máximo (10.0h) sin romper el piso
-for _ in range(300):
+# FASE 2: Control de Techo Estricto (Hard Constraint)
+for _ in range(800):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
     adel = buf / vel_maquina
 
     max_idx = np.argmax(adel)
-    if adel[max_idx] <= adelanto_max_estandar:
+    if adel[max_idx] <= adelanto_max_estandar + 0.01:
         break
 
     apagado = False
@@ -207,10 +206,24 @@ for _ in range(300):
                 break
             else:
                 produccion_h_144[h] = vel_maquina
-    if not apagado:
-        break
 
-# FASE 3: Compactación de turnos (elimina huecos de 1 hora)
+    if not apagado:
+        for h in range(max_idx + 1, 144):
+            if produccion_h_144[h] == vel_maquina:
+                produccion_h_144[h] = 0
+                p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
+                buf_test = p_acum_test - target_demanda_144
+                adel_test = buf_test / vel_maquina
+
+                if min(adel_test) >= objetivo_horas:
+                    apagado = True
+                    break
+                else:
+                    produccion_h_144[h] = vel_maquina
+        if not apagado:
+            break
+
+# FASE 3: Relleno de micro-huecos seguros
 for h in range(1, 143):
     if (
         produccion_h_144[h - 1] == vel_maquina
@@ -221,7 +234,10 @@ for h in range(1, 143):
         p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
         buf_test = p_acum_test - target_demanda_144
         adel_test = buf_test / vel_maquina
-        if max(adel_test) > adelanto_max_estandar:
+        if (
+            max(adel_test) > adelanto_max_estandar + 0.01
+            or min(adel_test) < objetivo_horas
+        ):
             produccion_h_144[h] = 0
 
 # ==========================================
@@ -257,7 +273,6 @@ for dia_idx, dia in enumerate(dias_semana):
         turnos.append((inicio_actual, prev))
 
         for h_ini, h_fin in turnos:
-            # HITO INICIO
             hitos_produccion.append({
                 "tipo": "INICIO",
                 "eje_x": f"{dia[:3]} {horas_24[h_ini]}",
@@ -269,7 +284,6 @@ for dia_idx, dia in enumerate(dias_semana):
                 ),
             })
 
-            # HITO FIN
             if h_fin == 23:
                 etiqueta_fin = "24:00"
                 eje_x_fin = f"{dia[:3]} 23:00"
@@ -314,7 +328,8 @@ fig = make_subplots(
     vertical_spacing=0.08,
     row_heights=[0.65, 0.35],
     subplot_titles=(
-        f"OPM GUADIX - Planificación Semanal Optimizada 24/7 (Piso {objetivo_horas}h)",
+        f"OPM GUADIX - Planificación Semanal Optimizada 24/7 (Piso"
+        f" {objetivo_horas}h)",
         "Horas de Colchón / Adelanto en Muelle",
     ),
 )
