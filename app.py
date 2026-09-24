@@ -140,7 +140,7 @@ for _ in range(5):
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR INTELIGENTE 144H (JERARQUÍA: SUELO ABSOLUTO + EXCEPCIÓN DE TECHO)
+# 3. MOTOR INTELIGENTE 144H (VERDADERA LÓGICA DE SUELO Y TECHO ORGÁNICOS)
 # ==========================================
 demanda_h_144 = []
 for dia in dias_semana:
@@ -155,11 +155,11 @@ target_demanda_144 = np.copy(demanda_acum_144).astype(float)
 for t in range(120, 144):
     target_demanda_144[t] += stock_objetivo_sabado * ((t - 119) / 24.0)
 
+# Partimos con la máquina completamente apagada en las 144 horas
 produccion_h_144 = [0] * 144
 
-# FASE 1: Prioridad Absoluta -> Garantizar el Suelo Inviolable (6.0h)
-# Si es estrictamente necesario para no bajar del suelo, la máquina se encenderá
-# aunque eso provoque rebasar temporalmente el techo (excepción justificada).
+# FASE 1: Garantizar el Piso Inviolable (6.0h).
+# La máquina solo se enciende allí donde el margen baja del suelo.
 for _ in range(1500):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
@@ -169,6 +169,7 @@ for _ in range(1500):
     if adel[min_idx] >= objetivo_horas:
         break
 
+    # Encender en la hora más crítica o inmediatamente anterior para rescatar el suelo
     encendido = False
     for h in range(min_idx, -1, -1):
         if produccion_h_144[h] == 0:
@@ -184,39 +185,38 @@ for _ in range(1500):
     if not encendido:
         break
 
-# FASE 2: Mantenerse en la Zona Ideal (Entre Suelo y Techo)
-# Apagar producción sobrante SÓLO SI el mínimo de la semana se mantiene seguro a salvo del suelo.
+# FASE 2: Controlar el Techo Máximo de forma orgánica.
+# Si superamos el techo de 10h, apagamos horas sobrantes SIEMPRE Y CUANDO
+# eso no provoque que otro punto de la semana rompa el suelo (respetando la excepción).
 for _ in range(2000):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
     adel = buf / vel_maquina
 
     max_idx = np.argmax(adel)
-    # Si el punto más alto está por debajo del techo, ya estamos en la zona ideal
     if adel[max_idx] <= adelanto_max_estandar + 0.001:
         break
 
-    apagado = False
-    # Intentar apagar horas productivas que estén por encima del techo estándar
-    horas_por_encima = [
+    # Buscar horas productivas que estén por encima del techo estándar
+    horas_exceso = [
         h for h in range(144) if adel[h] > adelanto_max_estandar and produccion_h_144[h] == vel_maquina
     ]
-    
-    if horas_por_encima:
-        # Apagar desde el pico más alto hacia atrás
-        h_a_apagar = max(horas_por_encima, key=lambda x: adel[x])
+
+    if horas_exceso:
+        # Apagar la hora más alta dentro del exceso para relajar el pico orgánicamente
+        h_a_apagar = max(horas_exceso, key=lambda x: adel[x])
         produccion_h_144[h_a_apagar] = 0
 
-        # Validar si al apagar esta hora rompemos el suelo en algún sitio
+        # Validar si al apagar esta hora perforamos el suelo en algún lugar
         p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
         buf_test = p_acum_test - target_demanda_144
         adel_test = buf_test / vel_maquina
 
         if min(adel_test) >= objetivo_horas - 0.001:
-            apagado = True
+            # Apagado válido: mantenemos el techo a raya sin tocar el suelo
+            continue
         else:
-            # ¡EXCEPCIÓN CRÍTICA ACTIVADA! Si apagar esto rompe el suelo, revertimos
-            # porque la regla de oro es que el suelo jamás se perfora.
+            # Excepción de seguridad: si apagar esto rompe el suelo, restauramos la hora
             produccion_h_144[h_a_apagar] = vel_maquina
             break
     else:
