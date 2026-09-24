@@ -140,7 +140,7 @@ for _ in range(5):
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR INTELIGENTE 144H (CONTINUIDAD Y ANTIPAROS)
+# 3. MOTOR DE CONTINUIDAD ESTRICTA (144H)
 # ==========================================
 demanda_h_144 = []
 for dia in dias_semana:
@@ -157,7 +157,7 @@ for t in range(120, 144):
 
 produccion_h_144 = [0] * 144
 
-# FASE 1: Garantizar el Piso Inviolable
+# FASE 1: Garantizar el piso inviolable activando bloques necesarios
 for _ in range(1500):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
@@ -182,28 +182,24 @@ for _ in range(1500):
     if not encendido:
         break
 
-# FASE 2: Suavizado y eliminación de micro-paradas (Elimina huecos cortos de 1 a 3 horas)
-for h in range(3, 141):
-    # Si hay un hueco inactivo corto rodeado de producción activa, lo rellenamos para evitar arranques tontos
-    if produccion_h_144[h] == 0:
-        if (
-            produccion_h_144[h - 1] == vel_maquina
-            and produccion_h_144[h + 1] == vel_maquina
-        ) or (
-            produccion_h_144[h - 2] == vel_maquina
-            and produccion_h_144[h + 1] == vel_maquina
-        ):
-            produccion_h_144[h] = vel_maquina
-        if (
-            h < 142
-            and produccion_h_144[h - 1] == vel_maquina
-            and produccion_h_144[h + 1] == 0
-            and produccion_h_144[h + 2] == vel_maquina
-        ):
-            produccion_h_144[h] = vel_maquina
-            produccion_h_144[h + 1] = vel_maquina
+# FASE 2: ELIMINACIÓN ABSOLUTA DE MICRO-PARADAS (Fusión de bloques continuos)
+# Si hay un hueco inactivo de hasta 6 horas rodeado de producción, se une obligatoriamente
+# siempre y cuando no rebase el techo máximo permitido.
+for _ in range(3):
+    for h in range(1, 143):
+        if produccion_h_144[h] == 0:
+            # Buscar hacia atrás y hacia adelante si hay producción activa cercana
+            prev_activa = any(produccion_h_144[max(0, h-6):h])
+            sig_activa = any(produccion_h_144[h+1:min(144, h+7)])
+            if prev_activa and sig_activa:
+                # Verificar simulación de techo
+                p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
+                buf_test = p_acum_test - target_demanda_144
+                adel_test = buf_test / vel_maquina
+                if adel_test[h] <= adelanto_max_estandar:
+                    produccion_h_144[h] = vel_maquina
 
-# FASE 3: Controlar el Techo Máximo y recortar excesos orgánicamente
+# FASE 3: Control estricto de Techo (Solo se detiene si supera el techo)
 for _ in range(2000):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
@@ -218,7 +214,7 @@ for _ in range(2000):
     ]
 
     if horas_exceso:
-        # Apagamos preferiblemente por los extremos de los turnos para no trocearlos
+        # Apagamos por los extremos del bloque de producción para mantener la continuidad interior
         h_a_apagar = max(horas_exceso, key=lambda x: adel[x])
         produccion_h_144[h_a_apagar] = 0
 
