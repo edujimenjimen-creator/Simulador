@@ -114,7 +114,7 @@ if sum(tiendas_por_hora) == 0:
     st.stop()
 
 # ==========================================
-# 2. CÁLCULO DE OBJETIVO DE SÁBADO (24/7)
+# 2. CÁLCULO DE OBJETIVO DE SÁBADO / STOCK INICIAL
 # ==========================================
 factor_lunes = demanda_lunes_siguiente / sum(tiendas_por_hora)
 demanda_lunes_h = [round(t * factor_lunes) for t in tiendas_por_hora]
@@ -140,167 +140,154 @@ for _ in range(5):
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR PROACTIVO 24/7 (LIBRE HASTA LAS 24:00)
+# 3. MOTOR PROACTIVO GLOBAL 144H (LUNES A SÁBADO CONTINUO)
+# ==========================================
+demanda_h_144 = []
+for dia in dias_semana:
+    dem_total = demanda_servicio_por_dia[dia]
+    factor = dem_total / sum(tiendas_por_hora)
+    dem_h = [round(t * factor) for t in tiendas_por_hora]
+    demanda_h_144.extend(dem_h)
+
+demanda_acum_144 = np.cumsum(demanda_h_144)
+
+# Curva objetivo para evaluación continua en 144 horas
+target_demanda_144 = np.copy(demanda_acum_144).astype(float)
+# En Sábado (de h=120 a h=143), la fábrica va acumulando el stock necesario para el Lunes
+for t in range(120, 144):
+    target_demanda_144[t] += stock_objetivo_sabado * ((t - 119) / 24.0)
+
+produccion_h_144 = [0] * 144
+
+# FASE 1: Garantizar Piso Inviolable (4.0h) a lo largo de las 144 horas
+for _ in range(500):
+    p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
+    buf = p_acum - target_demanda_144
+    adel = buf / vel_maquina
+
+    min_idx = np.argmin(adel)
+    if adel[min_idx] >= objetivo_horas:
+        break
+
+    encendido = False
+    for h in range(min_idx, -1, -1):
+        if produccion_h_144[h] == 0:
+            produccion_h_144[h] = vel_maquina
+            encendido = True
+            break
+    if not encendido:
+        for h in range(min_idx, 144):
+            if produccion_h_144[h] == 0:
+                produccion_h_144[h] = vel_maquina
+                encendido = True
+                break
+    if not encendido:
+        break
+
+# FASE 2: Control de Techo Máximo (10.0h) sin romper el piso
+for _ in range(300):
+    p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
+    buf = p_acum - target_demanda_144
+    adel = buf / vel_maquina
+
+    max_idx = np.argmax(adel)
+    if adel[max_idx] <= adelanto_max_estandar:
+        break
+
+    apagado = False
+    for h in range(max_idx, -1, -1):
+        if produccion_h_144[h] == vel_maquina:
+            produccion_h_144[h] = 0
+            p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
+            buf_test = p_acum_test - target_demanda_144
+            adel_test = buf_test / vel_maquina
+
+            if min(adel_test) >= objetivo_horas:
+                apagado = True
+                break
+            else:
+                produccion_h_144[h] = vel_maquina
+    if not apagado:
+        break
+
+# FASE 3: Compactación de turnos (elimina huecos de 1 hora)
+for h in range(1, 143):
+    if (
+        produccion_h_144[h - 1] == vel_maquina
+        and produccion_h_144[h] == 0
+        and produccion_h_144[h + 1] == vel_maquina
+    ):
+        produccion_h_144[h] = vel_maquina
+        p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
+        buf_test = p_acum_test - target_demanda_144
+        adel_test = buf_test / vel_maquina
+        if max(adel_test) > adelanto_max_estandar:
+            produccion_h_144[h] = 0
+
+# ==========================================
+# 4. CONSTRUCCIÓN DE DATOS DIARIOS Y HITOS
 # ==========================================
 df_completo_ajustado = []
 hitos_produccion = []
 stock_actual_00h = stock_inicial_lunes
 
 for dia_idx, dia in enumerate(dias_semana):
-    demanda_total = demanda_servicio_por_dia[dia]
-    factor_escala = demanda_total / sum(tiendas_por_hora)
-    demanda_h = [round(t * factor_escala) for t in tiendas_por_hora]
+    p_h_dia = produccion_h_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    dem_h_dia = demanda_h_144[dia_idx * 24 : (dia_idx + 1) * 24]
 
-    demanda_acum = np.cumsum(demanda_h)
-    demanda_total_real = demanda_acum[-1]
+    demanda_acum = np.cumsum(dem_h_dia)
+    produccion_acum = stock_actual_00h + np.cumsum(p_h_dia)
 
-    if dia == "Sábado":
-        demanda_acum_objetivo = [d + stock_objetivo_sabado for d in demanda_acum]
-        produccion_h = [vel_maquina] * 24
-    else:
-        demanda_acum_objetivo = demanda_acum
-        produccion_h = [0] * 24
-
-        # FASE 1: Garantizar el piso mínimo de horas en TODAS las horas (0 a 23)
-        for _ in range(60):
-            p_acum = stock_actual_00h + np.cumsum(produccion_h)
-            buf = p_acum - demanda_acum_objetivo
-            adel = buf / vel_maquina
-
-            min_idx = np.argmin(adel)
-            if adel[min_idx] >= objetivo_horas:
-                break
-
-            encendido = False
-            for h in range(min_idx, -1, -1):
-                if produccion_h[h] == 0:
-                    produccion_h[h] = vel_maquina
-                    encendido = True
-                    break
-            if not encendido:
-                for h in range(min_idx, 24):
-                    if produccion_h[h] == 0:
-                        produccion_h[h] = vel_maquina
-                        encendido = True
-                        break
-            if not encendido:
-                break
-
-        # FASE 2: Respetar el techo máximo SIN romper el piso mínimo (Permite hasta la hora 23)
-        for _ in range(40):
-            p_acum = stock_actual_00h + np.cumsum(produccion_h)
-            buf = p_acum - demanda_acum_objetivo
-            adel = buf / vel_maquina
-
-            max_idx = np.argmax(adel)
-            if adel[max_idx] <= adelanto_max_estandar:
-                break
-
-            apagado = False
-            for h in range(24):
-                if produccion_h[h] == vel_maquina:
-                    produccion_h[h] = 0
-                    p_acum_test = stock_actual_00h + np.cumsum(produccion_h)
-                    buf_test = p_acum_test - demanda_acum_objetivo
-                    adel_test = buf_test / vel_maquina
-
-                    if min(adel_test) >= objetivo_horas:
-                        apagado = True
-                        break
-                    else:
-                        produccion_h[h] = vel_maquina
-            if not apagado:
-                break
-
-    # FILTRO ESPECÍFICO PARA EL SÁBADO
-    if dia == "Sábado":
-        for _ in range(40):
-            p_acum = stock_actual_00h + np.cumsum(produccion_h)
-            buf = p_acum - demanda_acum_objetivo
-            adel = buf / vel_maquina
-
-            max_idx = np.argmax(adel)
-            if adel[max_idx] > adelanto_max_estandar:
-                excedentes = [
-                    i for i, a in enumerate(adel) if a > adelanto_max_estandar
-                ]
-                if excedentes:
-                    h_a_apagar = excedentes[-1]
-                    if produccion_h[h_a_apagar] > 0:
-                        produccion_h[h_a_apagar] = 0
-                    else:
-                        break
-                else:
-                    break
-            else:
-                break
-
-        for _ in range(40):
-            p_acum = stock_actual_00h + np.cumsum(produccion_h)
-            buf = p_acum - demanda_acum_objetivo
-            adel = buf / vel_maquina
-
-            min_idx = np.argmin(adel)
-            if adel[min_idx] < objetivo_horas:
-                encendido = False
-                for h in range(min_idx, -1, -1):
-                    if produccion_h[h] == 0:
-                        produccion_h[h] = vel_maquina
-                        encendido = True
-                        break
-                if not encendido:
-                    for h in range(min_idx, 24):
-                        if produccion_h[h] == 0:
-                            produccion_h[h] = vel_maquina
-                            encendido = True
-                            break
-                if not encendido:
-                    break
-            else:
-                break
-
-    produccion_acum = stock_actual_00h + np.cumsum(produccion_h)
-    buffer_muelle = produccion_acum - demanda_acum_objetivo
+    buffer_muelle = produccion_acum - demanda_acum
     horas_adelanto = np.round(buffer_muelle / vel_maquina, 2)
 
-    horas_activas = [i for i, p in enumerate(produccion_h) if p > 0]
+    horas_activas = [i for i, p in enumerate(p_h_dia) if p > 0]
     if horas_activas:
-        h_ini = horas_activas[0]
-        h_fin = horas_activas[-1]
+        turnos = []
+        inicio_actual = horas_activas[0]
+        prev = horas_activas[0]
 
-        hitos_produccion.append({
-            "tipo": "INICIO",
-            "eje_x": f"{dia[:3]} {horas_24[h_ini]}",
-            "y_val": produccion_acum[h_ini],
-            "texto": (
-                f"<b>INICIO PROD {horas_24[h_ini]}</b><br>Buffer:"
-                f" {int(buffer_muelle[h_ini]):,}".replace(",", ".")
-                + " pks"
-            ),
-        })
+        for h in horas_activas[1:]:
+            if h == prev + 1:
+                prev = h
+            else:
+                turnos.append((inicio_actual, prev))
+                inicio_actual = h
+                prev = h
+        turnos.append((inicio_actual, prev))
 
-        # --- GESTIÓN CORREGIDA DEL HITO DE FIN ---
-        if h_fin == 23:
-            h_fin_idx = 23
-            etiqueta_fin = "24:00"
-        else:
-            h_fin_idx = h_fin + 1
-            etiqueta_fin = horas_24[h_fin_idx]
-        # ----------------------------------------
+        for h_ini, h_fin in turnos:
+            # HITO INICIO
+            hitos_produccion.append({
+                "tipo": "INICIO",
+                "eje_x": f"{dia[:3]} {horas_24[h_ini]}",
+                "y_val": produccion_acum[h_ini],
+                "texto": (
+                    f"<b>INICIO PROD {horas_24[h_ini]}</b><br>Buffer:"
+                    f" {int(buffer_muelle[h_ini]):,}".replace(",", ".")
+                    + " pks"
+                ),
+            })
 
-        hitos_produccion.append({
-            "tipo": "FIN",
-            "eje_x": f"{dia[:3]} {etiqueta_fin}",
-            "y_val": (
-                produccion_acum[h_fin]
-                if h_fin == 23
-                else produccion_acum[h_fin_idx]
-            ),
-            "texto": (
-                f"<b>FIN PROD {etiqueta_fin}</b><br>Buffer:"
-                f" {int(buffer_muelle[h_fin]):,}".replace(",", ".") + " pks"
-            ),
-        })
+            # HITO FIN
+            if h_fin == 23:
+                etiqueta_fin = "24:00"
+                eje_x_fin = f"{dia[:3]} 23:00"
+                y_val_fin = produccion_acum[23]
+            else:
+                etiqueta_fin = horas_24[h_fin + 1]
+                eje_x_fin = f"{dia[:3]} {horas_24[h_fin + 1]}"
+                y_val_fin = produccion_acum[h_fin + 1]
+
+            hitos_produccion.append({
+                "tipo": "FIN",
+                "eje_x": eje_x_fin,
+                "y_val": y_val_fin,
+                "texto": (
+                    f"<b>FIN PROD {etiqueta_fin}</b><br>Buffer:"
+                    f" {int(buffer_muelle[h_fin]):,}".replace(",", ".") + " pks"
+                ),
+            })
 
     for h_idx in range(24):
         df_completo_ajustado.append({
@@ -310,15 +297,15 @@ for dia_idx, dia in enumerate(dias_semana):
             "Demanda_Acum": demanda_acum[h_idx],
             "Prod_Acum": produccion_acum[h_idx],
             "Adelanto_Horas": horas_adelanto[h_idx],
-            "Produciendo": 1 if produccion_h[h_idx] > 0 else 0,
+            "Produciendo": 1 if p_h_dia[h_idx] > 0 else 0,
         })
 
-    stock_actual_00h = produccion_acum[23] - demanda_total_real
+    stock_actual_00h = produccion_acum[23] - demanda_acum[-1]
 
 df_plot = pd.DataFrame(df_completo_ajustado)
 
 # ==========================================
-# 4. GRÁFICO INTERACTIVO CON PLOTLY
+# 5. GRÁFICO INTERACTIVO CON PLOTLY
 # ==========================================
 fig = make_subplots(
     rows=2,
@@ -557,6 +544,6 @@ fig.update_yaxes(title_text="Picks Acumulados", row=1, col=1, showgrid=True)
 fig.update_yaxes(title_text="Horas de Colchón", row=2, col=1, showgrid=True)
 
 # ==========================================
-# 5. RENDERIZADO EN STREAMLIT
+# 6. RENDERIZADO EN STREAMLIT
 # ==========================================
 st.plotly_chart(fig, use_container_width=True)
