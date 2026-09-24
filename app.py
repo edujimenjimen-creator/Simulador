@@ -140,7 +140,7 @@ for _ in range(5):
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR INTELIGENTE 144H (VERDADERA LÓGICA DE SUELO Y TECHO ORGÁNICOS)
+# 3. MOTOR INTELIGENTE 144H (SUELO Y TECHO ORGÁNICOS)
 # ==========================================
 demanda_h_144 = []
 for dia in dias_semana:
@@ -155,11 +155,9 @@ target_demanda_144 = np.copy(demanda_acum_144).astype(float)
 for t in range(120, 144):
     target_demanda_144[t] += stock_objetivo_sabado * ((t - 119) / 24.0)
 
-# Partimos con la máquina completamente apagada en las 144 horas
 produccion_h_144 = [0] * 144
 
-# FASE 1: Garantizar el Piso Inviolable (6.0h).
-# La máquina solo se enciende allí donde el margen baja del suelo.
+# FASE 1: Garantizar el Piso Inviolable (6.0h)
 for _ in range(1500):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
@@ -169,7 +167,6 @@ for _ in range(1500):
     if adel[min_idx] >= objetivo_horas:
         break
 
-    # Encender en la hora más crítica o inmediatamente anterior para rescatar el suelo
     encendido = False
     for h in range(min_idx, -1, -1):
         if produccion_h_144[h] == 0:
@@ -185,9 +182,7 @@ for _ in range(1500):
     if not encendido:
         break
 
-# FASE 2: Controlar el Techo Máximo de forma orgánica.
-# Si superamos el techo de 10h, apagamos horas sobrantes SIEMPRE Y CUANDO
-# eso no provoque que otro punto de la semana rompa el suelo (respetando la excepción).
+# FASE 2: Controlar el Techo Máximo de forma orgánica
 for _ in range(2000):
     p_acum = stock_inicial_lunes + np.cumsum(produccion_h_144)
     buf = p_acum - target_demanda_144
@@ -197,26 +192,21 @@ for _ in range(2000):
     if adel[max_idx] <= adelanto_max_estandar + 0.001:
         break
 
-    # Buscar horas productivas que estén por encima del techo estándar
     horas_exceso = [
         h for h in range(144) if adel[h] > adelanto_max_estandar and produccion_h_144[h] == vel_maquina
     ]
 
     if horas_exceso:
-        # Apagar la hora más alta dentro del exceso para relajar el pico orgánicamente
         h_a_apagar = max(horas_exceso, key=lambda x: adel[x])
         produccion_h_144[h_a_apagar] = 0
 
-        # Validar si al apagar esta hora perforamos el suelo en algún lugar
         p_acum_test = stock_inicial_lunes + np.cumsum(produccion_h_144)
         buf_test = p_acum_test - target_demanda_144
         adel_test = buf_test / vel_maquina
 
         if min(adel_test) >= objetivo_horas - 0.001:
-            # Apagado válido: mantenemos el techo a raya sin tocar el suelo
             continue
         else:
-            # Excepción de seguridad: si apagar esto rompe el suelo, restauramos la hora
             produccion_h_144[h_a_apagar] = vel_maquina
             break
     else:
@@ -351,43 +341,31 @@ red_x, red_y, red_text = [], [], []
 y_vals = df_plot["Adelanto_Horas"].values
 x_vals = df_plot["Eje_X"].values
 
-ultimo_texto_verde = None
-ultimo_texto_rojo = None
+# FILTRO LIMPIO: Solo picos y valles estrictos (se omiten mesetas y variaciones planas)
+ultimo_y_etiquetado = -999
 
 for i in range(len(y_vals)):
     val = y_vals[i]
-    es_pico = (
-        0 < i < len(y_vals) - 1
-        and y_vals[i] >= y_vals[i - 1]
-        and y_vals[i] >= y_vals[i + 1]
-    )
-    es_valle = (
-        0 < i < len(y_vals) - 1
-        and y_vals[i] <= y_vals[i - 1]
-        and y_vals[i] <= y_vals[i + 1]
-    )
-    cerca_limites = val >= adelanto_max_estandar - 0.2 or val <= objetivo_horas + 0.3
+    
+    es_pico = (0 < i < len(y_vals) - 1) and (y_vals[i] > y_vals[i - 1]) and (y_vals[i] > y_vals[i + 1])
+    es_valle = (0 < i < len(y_vals) - 1) and (y_vals[i] < y_vals[i - 1]) and (y_vals[i] < y_vals[i + 1])
+    es_extremo_global = (i == 0 or i == len(y_vals) - 1)
 
-    if es_pico or es_valle or cerca_limites or i == 0 or i == len(y_vals) - 1:
+    # Exigir cambio de tendencia y evitar acumulación en tramos planos (diferencia mínima de 0.4h)
+    if (es_pico or es_valle or es_extremo_global) and abs(val - ultimo_y_etiquetado) >= 0.4:
         texto_actual = f"{val:.1f}h"
         cumple_rango = objetivo_horas <= val <= adelanto_max_estandar
 
         if cumple_rango:
             green_x.append(x_vals[i])
             green_y.append(val)
-            if texto_actual != ultimo_texto_verde:
-                green_text.append(texto_actual)
-                ultimo_texto_verde = texto_actual
-            else:
-                green_text.append("")
+            green_text.append(texto_actual)
         else:
             red_x.append(x_vals[i])
             red_y.append(val)
-            if texto_actual != ultimo_texto_rojo:
-                red_text.append(texto_actual)
-                ultimo_texto_rojo = texto_actual
-            else:
-                red_text.append("")
+            red_text.append(texto_actual)
+            
+        ultimo_y_etiquetado = val
 
 if green_x:
     fig.add_trace(
