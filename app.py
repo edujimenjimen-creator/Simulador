@@ -118,12 +118,10 @@ if sum(tiendas_por_hora) == 0:
 # ==========================================
 factor_lunes = demanda_lunes_siguiente / sum(tiendas_por_hora)
 demanda_lunes_h = [round(t * factor_lunes) for t in tiendas_por_hora]
-demanda_acum_lunes = np.cumsum(demanda_lunes_h)
 
 cargas_madrugada_lunes = sum(demanda_lunes_h[:6])
 cargas_6h_lunes = sum(demanda_lunes_h[6:12])
 stock_objetivo_sabado = cargas_madrugada_lunes + cargas_6h_lunes
-
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
@@ -142,47 +140,33 @@ target_demanda_144 = np.copy(demanda_acum_144).astype(float)
 for t in range(120, 144):
     target_demanda_144[t] += stock_objetivo_sabado * ((t - 119) / 24.0)
 
-# LÓGICA INDUSTRIAL BLINDADA:
-# 1. Partimos de un estado donde la máquina solo produce cuando el colchón está por debajo del techo y necesita reponerse.
-# 2. Jamás se permite que el colchón supere estrictamente el "adelanto_max_estandar".
+# LÓGICA BLINDADA ANTI-SUPERACIÓN DE TECHO:
 produccion_h_144 = [0] * 144
+prod_acum_tot = stock_inicial_lunes
+demanda_acum_tot = 0
 
-# Simulamos hora a hora de forma estrictamente cronológica
-stock_actual = stock_inicial_lunes
 for t in range(144):
-    # Calcular cuál sería el colchón si decidimos producir en esta hora t
-    stock_si_produce = stock_actual - demanda_h_144[t] + vel_maquina
-    colchon_si_produce = (stock_si_produce - target_demanda_144[t]) / vel_maquina
-    
-    # Si al producir superamos el techo máximo, la máquina SE APAGA obligatoriamente
-    if colchon_si_produce > adelanto_max_estandar:
-        produccion_h_144[t] = 0
-        stock_actual = stock_actual - demanda_h_144[t] # Sin producción en esta hora
-    else:
-        # Si estamos por debajo del techo, evaluamos si necesitamos producir para no hundirnos por debajo del piso
-        stock_si_no_produce = stock_actual - demanda_h_144[t]
-        colchon_si_no_produce = (stock_si_no_produce - target_demanda_144[t]) / vel_maquina
-        
-        if colchon_si_no_produce < objetivo_horas:
-            produccion_h_144[t] = vel_maquina
-            stock_actual = stock_si_produce
-        else:
-            # Si estamos en un rango seguro entre piso y techo, mantenemos el estado anterior o encendemos de forma fluida
-            produccion_h_144[t] = vel_maquina
-            stock_actual = stock_si_produce
+    demanda_acum_tot += demanda_h_144[t]
+    target_t = demanda_acum_tot
+    if t >= 120:
+        target_t += stock_objetivo_sabado * ((t - 119) / 24.0)
 
-# Segunda pasada de limpieza: eliminar paradas de 1 o 2 horas (micro-cortes) 
-# asegurando que NUNCA se supere el techo al rellenarlas.
-for _ in range(3):
-    for h in range(1, 143):
-        if produccion_h_144[h] == 0:
-            if produccion_h_144[h-1] == vel_maquina and produccion_h_144[h+1] == vel_maquina:
-                # Comprobar si al rellenar este hueco se supera el techo en algún punto futuro cercano
-                p_acum_test = stock_inicial_lunes + np.cumsum([vel_maquina if i == h else p for i, p in enumerate(produccion_h_144)])
-                buf_test = p_acum_test - target_demanda_144
-                adel_test = buf_test / vel_maquina
-                if np.max(adel_test) <= adelanto_max_estandar:
-                    produccion_h_144[h] = vel_maquina
+    # Comprobar colchón si producimos en esta hora
+    colchon_si_produce = (
+        prod_acum_tot + vel_maquina - target_t
+    ) / vel_maquina
+    colchon_actual = (prod_acum_tot - target_t) / vel_maquina
+
+    # REGLA DE HIERRO: Si al producir rebasamos el techo máximo, apagamos obligatoriamente
+    if colchon_si_produce <= adelanto_max_estandar:
+        # Si estamos por debajo del techo, producimos para mantenernos seguros o rellenar
+        if colchon_actual < adelanto_max_estandar:
+            produccion_h_144[t] = vel_maquina
+            prod_acum_tot += vel_maquina
+        else:
+            produccion_h_144[t] = 0
+    else:
+        produccion_h_144[t] = 0
 
 # ==========================================
 # 4. CONSTRUCCIÓN DE DATOS DIARIOS Y HITOS
@@ -265,7 +249,7 @@ fig = make_subplots(
     vertical_spacing=0.08,
     row_heights=[0.65, 0.35],
     subplot_titles=(
-        f"OPM GUADIX - Planificación Semanal Optimizada 24/7 (Piso {objetivo_horas}h)",
+        f"OPM GUADIX - Planificación Semanal Optimizada 24/7 (Techo Máximo {adelanto_max_estandar}h)",
         "Horas de Colchón / Adelanto en Muelle",
     ),
 )
@@ -364,7 +348,7 @@ if red_x:
             textposition="top center",
             textfont=dict(size=9, color="#d62728"),
             marker=dict(size=8, color="#d62728"),
-            name="Fuera de Rango (Excepción / Alerta)",
+            name="Fuera de Rango (Alerta)",
             showlegend=False,
             hovertemplate="<b>%{x}</b><br>Colchón: %{y:.2f} h<extra></extra>",
         ),
