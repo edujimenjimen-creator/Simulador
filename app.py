@@ -125,7 +125,7 @@ stock_objetivo_sabado = cargas_madrugada_lunes + cargas_6h_lunes
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR DE CONTROL ESTRICTO CON FILTRO ANTI-MICROPARADAS
+# 3. MOTOR DE CONTROL CON HISTÉRESIS INDUSTRIAL (144H)
 # ==========================================
 demanda_h_144 = []
 for dia in dias_semana:
@@ -143,6 +143,10 @@ for t in range(120, 144):
 produccion_h_144 = [0] * 144
 prod_acum_tot = stock_inicial_lunes
 demanda_acum_tot = 0
+estado_produciendo = True  # Arrancamos con estado activo
+
+# Margen de histéresis: una vez que toca el techo, no se reactiva hasta bajar 2.0 horas o tocar el piso
+margen_histeresis = 2.0
 
 for t in range(144):
     demanda_acum_tot += demanda_h_144[t]
@@ -150,33 +154,52 @@ for t in range(144):
     if t >= 120:
         target_t += stock_objetivo_sabado * ((t - 119) / 24.0)
 
-    colchon_si_produce = (
-        prod_acum_tot + vel_maquina - target_t
-    ) / vel_maquina
     colchon_actual = (prod_acum_tot - target_t) / vel_maquina
 
-    if colchon_si_produce <= adelanto_max_estandar + 0.05:  # Margen de tolerancia de redondeo
-        if colchon_actual < adelanto_max_estandar:
+    if estado_produciendo:
+        colchon_si_produce = (
+            prod_acum_tot + vel_maquina - target_t
+        ) / vel_maquina
+        # Si al producir superamos el techo, apagamos
+        if colchon_si_produce > adelanto_max_estandar:
+            estado_produciendo = False
+            produccion_h_144[t] = 0
+        else:
             produccion_h_144[t] = vel_maquina
             prod_acum_tot += vel_maquina
+    else:
+        # Estamos apagados por haber tocado el techo. Exigimos histéresis para rearrancar.
+        limite_rearranque = max(
+            objetivo_horas, adelanto_max_estandar - margen_histeresis
+        )
+        if (
+            colchon_actual <= limite_rearranque
+            or colchon_actual < objetivo_horas
+        ):
+            estado_produciendo = True
+            colchon_si_produce = (
+                prod_acum_tot + vel_maquina - target_t
+            ) / vel_maquina
+            if colchon_si_produce <= adelanto_max_estandar:
+                produccion_h_144[t] = vel_maquina
+                prod_acum_tot += vel_maquina
+            else:
+                estado_produciendo = False
+                produccion_h_144[t] = 0
         else:
             produccion_h_144[t] = 0
-    else:
-        produccion_h_144[t] = 0
 
-# FILTRO ANTI-MICROPARADAS: Eliminar huecos de parada inferiores o iguales a 2 horas
+# FILTRO DE LIMPIEZA: Eliminar huecos aislados de 1 o 2 horas para garantizar bloques sólidos
 for _ in range(3):
     for h in range(2, 142):
         if produccion_h_144[h] == 0:
-            # Si hay un hueco aislado de 1 o 2 horas entre horas productivas, lo unificamos
-            if produccion_h_144[h-1] > 0 and produccion_h_144[h+1] > 0:
-                # Verificar que al rellenarlo no rompemos por completo el techo de forma crítica
+            if produccion_h_144[h - 1] > 0 and produccion_h_144[h + 1] > 0:
                 p_test = list(produccion_h_144)
                 p_test[h] = vel_maquina
                 p_acum_test = stock_inicial_lunes + np.cumsum(p_test)
                 buf_test = p_acum_test - target_demanda_144
                 adel_test = buf_test / vel_maquina
-                if np.max(adel_test) <= adelanto_max_estandar + 0.5: # Pequeño margen estético
+                if np.max(adel_test) <= adelanto_max_estandar + 0.3:
                     produccion_h_144[h] = vel_maquina
 
 # ==========================================
