@@ -140,7 +140,7 @@ for _ in range(5):
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR PROACTIVO 24/7 (GARANTÍA ABSOLUTA DE SUELO)
+# 3. MOTOR PROACTIVO 24/7 (LIBRE HASTA LAS 24:00)
 # ==========================================
 df_completo_ajustado = []
 hitos_produccion = []
@@ -161,9 +161,7 @@ for dia_idx, dia in enumerate(dias_semana):
         demanda_acum_objetivo = demanda_acum
         produccion_h = [0] * 24
 
-        # FASE 1: GARANTÍA INEXORABLE DEL SUELO MÍNIMO
-        # El sistema iterará y encenderá horas (empezando por las más cercanas al punto crítico)
-        # hasta que CUALQUIER hora de la semana cumpla estrictamente con el piso mínimo de horas.
+        # FASE 1: Garantizar el piso mínimo de horas en TODAS las horas (0 a 23)
         for _ in range(60):
             p_acum = stock_actual_00h + np.cumsum(produccion_h)
             buf = p_acum - demanda_acum_objetivo
@@ -173,7 +171,6 @@ for dia_idx, dia in enumerate(dias_semana):
             if adel[min_idx] >= objetivo_horas:
                 break
 
-            # Buscar la hora apagada más cercana para encenderla y levantar el valle
             encendido = False
             for h in range(min_idx, -1, -1):
                 if produccion_h[h] == 0:
@@ -189,7 +186,7 @@ for dia_idx, dia in enumerate(dias_semana):
             if not encendido:
                 break
 
-        # FASE 2: RESPETAR EL TECHO MÁXIMO (Solo apaga si NO se vulnera el suelo mínimo)
+        # FASE 2: Respetar el techo máximo SIN romper el piso mínimo (Permite hasta la hora 23)
         for _ in range(40):
             p_acum = stock_actual_00h + np.cumsum(produccion_h)
             buf = p_acum - demanda_acum_objetivo
@@ -207,13 +204,12 @@ for dia_idx, dia in enumerate(dias_semana):
                     buf_test = p_acum_test - demanda_acum_objetivo
                     adel_test = buf_test / vel_maquina
 
-                    # REGLA DE ORO: Solo permitimos apagar si el punto más bajo NO baja del piso mínimo
                     if min(adel_test) >= objetivo_horas:
                         apagado = True
                         break
                     else:
-                        produccion_h[h] = vel_maquina  # Revertir si rompe el suelo
-            if not apagado:
+                        produccion_h[h] = vel_maquina
+            if notapagado:
                 break
 
     # FILTRO ESPECÍFICO PARA EL SÁBADO
@@ -283,15 +279,17 @@ for dia_idx, dia in enumerate(dias_semana):
             ),
         })
 
-        h_fin_idx = min(h_fin + 1, 23)
+        # Permitir que el fin de producción muestre correctamente hasta las 23:00 / 24:00
+        h_fin_idx = h_fin + 1 if h_fin < 23 else 23
+        etiqueta_fin = "24:00" if h_fin == 23 else horas_24[h_fin_idx]
+
         hitos_produccion.append({
             "tipo": "FIN",
-            "eje_x": f"{dia[:3]} {horas_24[h_fin_idx]}",
-            "y_val": produccion_acum[h_fin_idx],
+            "eje_x": f"{dia[:3]} {horas_24[h_fin] if h_fin == 23 else horas_24[h_fin_idx]}",
+            "y_val": produccion_acum[h_fin_idx if h_fin < 23 else 23],
             "texto": (
-                f"<b>FIN PROD {horas_24[h_fin_idx]}</b><br>Buffer:"
-                f" {int(buffer_muelle[h_fin_idx]):,}".replace(",", ".")
-                + " pks"
+                f"<b>FIN PROD {etiqueta_fin}</b><br>Buffer:"
+                f" {int(buffer_muelle[h_fin]):,}".replace(",", ".") + " pks"
             ),
         })
 
