@@ -4,11 +4,11 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-# ======x====================================
+# ==========================================
 # 0. CONFIGURACIÓN DE PÁGINA STREAMLIT
 # ==========================================
 st.set_page_config(page_title="OPM Guadix - Planificación Semanal", layout="wide")
-st.title("🏭 OPM Guadix: Panel de Planificación Semanal Optimizada (24/7)")
+st.title("🏭 OPM Guadix: Panel de Planificación Semanal con Turnos Manuales")
 
 # ==========================================
 # 1. PARÁMETROS CONFIGURABLES (VÍA SIDEBAR)
@@ -30,7 +30,7 @@ objetivo_horas = st.sidebar.number_input(
     step=0.5,
 )
 adelanto_max_estandar = st.sidebar.number_input(
-    "Techo Máximo Configurable (Horas)",
+    "Techo Máximo de Referencia (Horas)",
     min_value=5.0,
     max_value=24.0,
     value=10.0,
@@ -67,8 +67,45 @@ demanda_lunes_siguiente = st.sidebar.number_input(
     step=5000,
 )
 
+# ==========================================
+# 1.1. CONTROL MANUAL DE TURNOS POR DÍA
+# ==========================================
+st.sidebar.subheader("🕒 Horarios Manuales de Producción")
+st.sidebar.markdown(
+    "Define la hora de inicio y fin de producción para cada día (Formato 24h)."
+)
+
+horas_opciones = [f"{h:02d}:00" for h in range(24)] + ["24:00"]
+turnos_manuales = {}
+
+dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+
+# Valores por defecto lógicos para simular turnos
+defaults_turnos = {
+    "Lunes": ("00:00", "21:00"),
+    "Martes": ("02:00", "22:00"),
+    "Miércoles": ("00:00", "22:00"),
+    "Jueves": ("00:00", "22:00"),
+    "Viernes": ("00:00", "22:00"),
+    "Sábado": ("00:00", "14:00"),
+}
+
+for dia in dias_semana:
+    col1, col2 = st.sidebar.columns(2)
+    def_ini, def_fin = defaults_turnos[dia]
+    idx_ini = horas_opciones.index(def_ini) if def_ini in horas_opciones else 0
+    idx_fin = (
+        horas_opciones.index(def_fin) if def_fin in horas_opciones else len(horas_opciones) - 1
+    )
+
+    with col1:
+        h_ini = st.selectbox(f"[{dia[:3]}] Inicio", horas_opciones[:24], index=idx_ini, key=f"ini_{dia}")
+    with col2:
+        h_fin = st.selectbox(f"[{dia[:3]}] Fin", horas_opciones, index=idx_fin, key=f"fin_{dia}")
+    
+    turnos_manuales[dia] = (h_ini, h_fin)
+
 with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
-    st.markdown("Ajusta el peso relativo de tiendas por hora:")
     default_tiendas = [
         1,
         3,
@@ -107,7 +144,6 @@ with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
         tiendas_por_hora.append(val)
 
 horas_24 = [f"{h:02d}:00" for h in range(24)]
-dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
 if sum(tiendas_por_hora) == 0:
     st.error("⚠️ El perfil horario de tiendas no puede sumar cero.")
@@ -125,7 +161,7 @@ stock_objetivo_sabado = cargas_madrugada_lunes + cargas_6h_lunes
 stock_inicial_lunes = stock_objetivo_sabado
 
 # ==========================================
-# 3. MOTOR DE CONTROL CON HISTÉRESIS INDUSTRIAL (144H)
+# 3. MOTOR DE PRODUCCIÓN SEGÚN TURNOS MANUALES (144H)
 # ==========================================
 demanda_h_144 = []
 for dia in dias_semana:
@@ -141,66 +177,21 @@ for t in range(120, 144):
     target_demanda_144[t] += stock_objetivo_sabado * ((t - 119) / 24.0)
 
 produccion_h_144 = [0] * 144
-prod_acum_tot = stock_inicial_lunes
-demanda_acum_tot = 0
-estado_produciendo = True  # Arrancamos con estado activo
 
-# Margen de histéresis: una vez que toca el techo, no se reactiva hasta bajar 2.0 horas o tocar el piso
-margen_histeresis = 2.0
+# Traducir los selectores manuales a matriz de producción de 144 horas
+for dia_idx, dia in enumerate(dias_semana):
+    h_ini_str, h_fin_str = turnos_manuales[dia]
+    idx_ini = int(h_ini_str.split(":")[0])
+    idx_fin = 24 if h_fin_str == "24:00" else int(h_fin_str.split(":")[0])
 
-for t in range(144):
-    demanda_acum_tot += demanda_h_144[t]
-    target_t = demanda_acum_tot
-    if t >= 120:
-        target_t += stock_objetivo_sabado * ((t - 119) / 24.0)
-
-    colchon_actual = (prod_acum_tot - target_t) / vel_maquina
-
-    if estado_produciendo:
-        colchon_si_produce = (
-            prod_acum_tot + vel_maquina - target_t
-        ) / vel_maquina
-        # Si al producir superamos el techo, apagamos
-        if colchon_si_produce > adelanto_max_estandar:
-            estado_produciendo = False
-            produccion_h_144[t] = 0
-        else:
-            produccion_h_144[t] = vel_maquina
-            prod_acum_tot += vel_maquina
-    else:
-        # Estamos apagados por haber tocado el techo. Exigimos histéresis para rearrancar.
-        limite_rearranque = max(
-            objetivo_horas, adelanto_max_estandar - margen_histeresis
-        )
-        if (
-            colchon_actual <= limite_rearranque
-            or colchon_actual < objetivo_horas
-        ):
-            estado_produciendo = True
-            colchon_si_produce = (
-                prod_acum_tot + vel_maquina - target_t
-            ) / vel_maquina
-            if colchon_si_produce <= adelanto_max_estandar:
-                produccion_h_144[t] = vel_maquina
-                prod_acum_tot += vel_maquina
-            else:
-                estado_produciendo = False
-                produccion_h_144[t] = 0
-        else:
-            produccion_h_144[t] = 0
-
-# FILTRO DE LIMPIEZA: Eliminar huecos aislados de 1 o 2 horas para garantizar bloques sólidos
-for _ in range(3):
-    for h in range(2, 142):
-        if produccion_h_144[h] == 0:
-            if produccion_h_144[h - 1] > 0 and produccion_h_144[h + 1] > 0:
-                p_test = list(produccion_h_144)
-                p_test[h] = vel_maquina
-                p_acum_test = stock_inicial_lunes + np.cumsum(p_test)
-                buf_test = p_acum_test - target_demanda_144
-                adel_test = buf_test / vel_maquina
-                if np.max(adel_test) <= adelanto_max_estandar + 0.3:
-                    produccion_h_144[h] = vel_maquina
+    for h in range(24):
+        # Si el turno cruza franjas horarias o es normal
+        if idx_ini < idx_fin:
+            if idx_ini <= h < idx_fin:
+                produccion_h_144[dia_idx * 24 + h] = vel_maquina
+        elif idx_ini > idx_fin:  # Turno nocturno que cruza medianoche (ej: 22:00 a 06:00)
+            if h >= idx_ini or h < idx_fin:
+                produccion_h_144[dia_idx * 24 + h] = vel_maquina
 
 # ==========================================
 # 4. CONSTRUCCIÓN DE DATOS DIARIOS Y HITOS
@@ -283,8 +274,8 @@ fig = make_subplots(
     vertical_spacing=0.08,
     row_heights=[0.65, 0.35],
     subplot_titles=(
-        f"OPM GUADIX - Planificación Semanal Optimizada 24/7 (Techo Máximo {adelanto_max_estandar}h)",
-        "Horas de Colchón / Adelanto en Muelle",
+        "OPM GUADIX - Simulación con Turnos Manuales Personalizados",
+        "Evolución del Colchón / Horas de Adelanto",
     ),
 )
 
@@ -330,7 +321,6 @@ red_x, red_y, red_text = [], [], []
 
 y_vals = df_plot["Adelanto_Horas"].values
 x_vals = df_plot["Eje_X"].values
-
 ultimo_y_etiquetado = -999
 
 for i in range(len(y_vals)):
@@ -408,7 +398,7 @@ fig.add_hline(
     line_width=1.5,
     row=2,
     col=1,
-    annotation_text=f"Techo Máximo ({adelanto_max_estandar}h)",
+    annotation_text=f"Techo Máximo Ref ({adelanto_max_estandar}h)",
     annotation_position="top right",
 )
 
