@@ -9,7 +9,7 @@ import streamlit as st
 # ==========================================
 # 0. CONFIGURACIÓN DE PÁGINA STREAMLIT
 # ==========================================
-st.set_page_config(page_title="OPM Guadix - Planificación Semanal", layout="wide")
+st.set_page_config(page_title="OPM - Planificación Semanal", layout="wide")
 st.title("🏭 OPM Guadix: Planificación con Playa de Expedición (30k Capacidad)")
 
 CONFIG_FILE = "turnos_config.json"
