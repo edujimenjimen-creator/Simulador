@@ -10,29 +10,7 @@ import streamlit as st
 # 0. CONFIGURACIÓN DE PÁGINA STREAMLIT
 # ==========================================
 st.set_page_config(page_title="OPM - Planificación Semanal", layout="wide")
-st.title("🏭 OPM Guadix: Planificación con Playa de Expedición (30k Capacidad)")
-
-CONFIG_FILE = "turnos_config.json"
-
-# Valores por defecto iniciales
-defaults_turnos_base = {
-    "Lunes": ("00:00", "21:00"),
-    "Martes": ("02:00", "22:00"),
-    "Miércoles": ("00:00", "22:00"),
-    "Jueves": ("00:00", "22:00"),
-    "Viernes": ("00:00", "22:00"),
-    "Sábado": ("00:00", "14:00"),
-}
-
-# Cargar configuración guardada previamente si existe
-if os.path.exists(CONFIG_FILE):
-    try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            defaults_turnos = json.load(f)
-    except:
-        defaults_turnos = defaults_turnos_base
-else:
-    defaults_turnos = defaults_turnos_base
+st.title("🏭 OPM Guadix: Planificación Autónoma con Playa de Expedición (30k Capacidad)")
 
 # ==========================================
 # 1. PARÁMETROS CONFIGURABLES (VÍA SIDEBAR)
@@ -63,62 +41,13 @@ adelanto_max_estandar = st.sidebar.number_input(
 
 st.sidebar.subheader("📅 Demanda Diaria de Servicio (Picks)")
 demanda_servicio_por_dia = {
-    "Lunes": st.sidebar.number_input(
-        "Lunes", min_value=10000, max_value=200000, value=70000, step=5000
-    ),
-    "Martes": st.sidebar.number_input(
-        "Martes", min_value=10000, max_value=200000, value=50000, step=5000
-    ),
-    "Miércoles": st.sidebar.number_input(
-        "Miércoles", min_value=10000, max_value=200000, value=75000, step=5000
-    ),
-    "Jueves": st.sidebar.number_input(
-        "Jueves", min_value=10000, max_value=200000, value=80000, step=5000
-    ),
-    "Viernes": st.sidebar.number_input(
-        "Viernes", min_value=10000, max_value=200000, value=89000, step=5000
-    ),
-    "Sábado": st.sidebar.number_input(
-        "Sábado", min_value=10000, max_value=200000, value=60000, step=5000
-    ),
+    "Lunes": st.sidebar.number_input("Lunes", min_value=10000, max_value=200000, value=70000, step=5000),
+    "Martes": st.sidebar.number_input("Martes", min_value=10000, max_value=200000, value=50000, step=5000),
+    "Miércoles": st.sidebar.number_input("Miércoles", min_value=10000, max_value=200000, value=75000, step=5000),
+    "Jueves": st.sidebar.number_input("Jueves", min_value=10000, max_value=200000, value=80000, step=5000),
+    "Viernes": st.sidebar.number_input("Viernes", min_value=10000, max_value=200000, value=89000, step=5000),
+    "Sábado": st.sidebar.number_input("Sábado", min_value=10000, max_value=200000, value=60000, step=5000),
 }
-
-# ==========================================
-# 1.1. CONTROL MANUAL DE TURNOS CON PERSISTENCIA
-# ==========================================
-st.sidebar.subheader("🕒 Horarios Manuales de Producción")
-st.sidebar.markdown(
-    "Los cambios se guardan automáticamente en tu equipo al modificar los selectores."
-)
-
-horas_opciones = [f"{h:02d}:00" for h in range(24)] + ["24:00"]
-turnos_manuales = {}
-dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
-
-cambio_detectado = False
-nuevos_valores_config = {}
-
-for dia in dias_semana:
-    col1, col2 = st.sidebar.columns(2)
-    def_ini, def_fin = defaults_turnos.get(dia, ("00:00", "21:00"))
-    
-    idx_ini = horas_opciones.index(def_ini) if def_ini in horas_opciones else 0
-    idx_fin = horas_opciones.index(def_fin) if def_fin in horas_opciones else len(horas_opciones) - 1
-
-    with col1:
-        h_ini = st.selectbox(f"[{dia[:3]}] Inicio", horas_opciones[:24], index=idx_ini, key=f"ini_{dia}")
-    with col2:
-        h_fin = st.selectbox(f"[{dia[:3]}] Fin", horas_opciones, index=idx_fin, key=f"fin_{dia}")
-    
-    turnos_manuales[dia] = (h_ini, h_fin)
-    nuevos_valores_config[dia] = (h_ini, h_fin)
-
-    if (h_ini, h_fin) != defaults_turnos.get(dia):
-        cambio_detectado = True
-
-if cambio_detectado:
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(nuevos_valores_config, f, indent=4)
 
 with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
     default_tiendas = [1, 3, 3, 3, 3, 0, 0, 0, 0, 8, 19, 9, 9, 2, 2, 0, 3, 7, 12, 4, 1, 0, 0, 0]
@@ -128,6 +57,7 @@ with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
         tiendas_por_hora.append(val)
 
 horas_24 = [f"{h:02d}:00" for h in range(24)]
+dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
 if sum(tiendas_por_hora) == 0:
     st.error("⚠️ El perfil horario de tiendas no puede sumar cero.")
@@ -144,59 +74,56 @@ for dia in dias_semana:
     demanda_h_144.extend(dem_h)
 
 # ==========================================
-# 3. MOTOR DE PRODUCCIÓN CON CAPACIDAD DE PLAYA (30K)
+# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (PLAYA 30K)
 # ==========================================
 CAPACIDAD_PLAYA = 30000
 
-stock_actual = CAPACIDAD_PLAYA
+stock_actual = CAPACIDAD_PLAYA  # Arrancamos con la playa llena
 demanda_acumulada = 0
-produccion_acumulada = CAPACIDAD_PLAYH = CAPACIDAD_PLAYA
+produccion_acumulada = CAPACIDAD_PLAYA
 
 demanda_acum_144 = []
 prod_acum_144 = []
 adelanto_horas_144 = []
 produccion_efectiva_144 = []
 
+# Estado inicial de la máquina: encendida si hay hueco en la playa
+maquina_encendida = True
+
 for t in range(144):
-    dia_idx = t // 24
-    h = t % 24
-    dia = dias_semana[dia_idx]
-    
-    # Demanda de esta hora
     dem_h = demanda_h_144[t]
     demanda_acumulada += dem_h
     demanda_acum_144.append(demanda_acumulada)
     
-    # Comprobar si la máquina está en su horario laboral configurado
-    h_ini_str, h_fin_str = turnos_manuales[dia]
-    idx_ini = int(h_ini_str.split(":")[0])
-    idx_fin = 24 if h_fin_str == "24:00" else int(h_fin_str.split(":")[0])
-    
-    en_horario = False
-    if idx_ini < idx_fin:
-        if idx_ini <= h < idx_fin:
-            en_horario = True
-    elif idx_ini > idx_fin:
-        if h >= idx_ini or h < idx_fin:
-            en_horario = True
-            
-    # La demanda vacía la playa primero en esta hora
+    # 1. La demanda del cliente vacía la playa en esta hora
     stock_actual -= dem_h
     if stock_actual < 0:
-        stock_actual = 0  # Rotura de stock
-        
-    # Producción: si está en horario y hay hueco en la playa (< 30,000)
+        stock_actual = 0  # Contención de rotura de stock
+
+    # 2. Decisión autónoma basada exclusivamente en el nivel de stock (playa)
+    # Si la playa se llena (llega a 30k), la máquina se detiene
+    if stock_actual >= CAPACIDAD_PLAYA:
+        maquina_encendida = False
+    # Si el stock baja al piso inviolable o la máquina estaba parada y hay espacio, arranca
+    elif stock_actual <= (objetivo_horas * vel_maquina) or stock_actual < CAPACIDAD_PLAYA:
+        maquina_encendida = True
+
+    # 3. Producción efectiva de la hora
     prod_h = 0
-    if en_horario and stock_actual < CAPACIDAD_PLAYA:
+    if maquina_encendida and stock_actual < CAPACIDAD_PLAYA:
         espacio_libre = CAPACIDAD_PLAYA - stock_actual
         prod_h = min(vel_maquina, espacio_libre)
         stock_actual += prod_h
         
+        # Si al producir alcanzamos los 30k exactos en esta hora, apagamos para el siguiente ciclo
+        if stock_actual >= CAPACIDAD_PLAYA:
+            maquina_encendida = False
+
     produccion_acumulada += prod_h
     prod_acum_144.append(produccion_acumulada)
     produccion_efectiva_144.append(prod_h)
     
-    # Horas de adelanto marcadas por el stock actual en la playa
+    # Horas de adelanto marcadas por el stock resultante en la playa
     horas_adelanto = round(stock_actual / vel_maquina, 2)
     adelanto_horas_144.append(horas_adelanto)
 
@@ -275,7 +202,7 @@ fig = make_subplots(
     vertical_spacing=0.08,
     row_heights=[0.65, 0.35],
     subplot_titles=(
-        "OPM GUADIX - Control por Playa de Expedición (Máx 30k)",
+        "OPM GUADIX - Control Autónomo por Playa de Expedición (Máx 30k)",
         "Evolución del Colchón / Horas de Adelanto (Stock en Playa)",
     ),
 )
