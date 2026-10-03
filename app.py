@@ -10,7 +10,7 @@ import streamlit as st
 # 0. CONFIGURACIÓN DE PÁGINA STREAMLIT
 # ==========================================
 st.set_page_config(page_title="OPM Guadix - Planificación Semanal", layout="wide")
-st.title("🏭 OPM Guadix: Planificación con Guardado Automático")
+st.title("🏭 OPM Guadix: Planificación con Playa de Expedición (30k Capacidad)")
 
 CONFIG_FILE = "turnos_config.json"
 
@@ -50,14 +50,14 @@ objetivo_horas = st.sidebar.number_input(
     "Piso Inviolable Mínimo (Horas)",
     min_value=1.0,
     max_value=12.0,
-    value=6.0,
+    value=4.0,
     step=0.5,
 )
 adelanto_max_estandar = st.sidebar.number_input(
     "Techo Máximo de Referencia (Horas)",
     min_value=5.0,
     max_value=24.0,
-    value=10.0,
+    value=6.0,
     step=0.5,
 )
 
@@ -82,14 +82,6 @@ demanda_servicio_por_dia = {
         "Sábado", min_value=10000, max_value=200000, value=60000, step=5000
     ),
 }
-
-demanda_lunes_siguiente = st.sidebar.number_input(
-    "Demanda Lunes Siguiente (Picks)",
-    min_value=10000,
-    max_value=200000,
-    value=70000,
-    step=5000,
-)
 
 # ==========================================
 # 1.1. CONTROL MANUAL DE TURNOS CON PERSISTENCIA
@@ -124,7 +116,6 @@ for dia in dias_semana:
     if (h_ini, h_fin) != defaults_turnos.get(dia):
         cambio_detectado = True
 
-# Si el usuario modificó algo, guardamos el archivo JSON automáticamente
 if cambio_detectado:
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(nuevos_valores_config, f, indent=4)
@@ -143,18 +134,7 @@ if sum(tiendas_por_hora) == 0:
     st.stop()
 
 # ==========================================
-# 2. CÁLCULO DE OBJETIVO / STOCK INICIAL
-# ==========================================
-factor_lunes = demanda_lunes_siguiente / sum(tiendas_por_hora)
-demanda_lunes_h = [round(t * factor_lunes) for t in tiendas_por_hora]
-
-cargas_madrugada_lunes = sum(demanda_lunes_h[:6])
-cargas_6h_lunes = sum(demanda_lunes_h[6:12])
-stock_objetivo_sabado = cargas_madrugada_lunes + cargas_6h_lunes
-stock_inicial_lunes = stock_objetivo_sabado
-
-# ==========================================
-# 3. MOTOR DE PRODUCCIÓN
+# 2. PREPARACIÓN DE DEMANDA HORA A HORA (144h)
 # ==========================================
 demanda_h_144 = []
 for dia in dias_semana:
@@ -163,41 +143,76 @@ for dia in dias_semana:
     dem_h = [round(t * factor) for t in tiendas_por_hora]
     demanda_h_144.extend(dem_h)
 
-demanda_acum_144 = np.cumsum(demanda_h_144)
-target_demanda_144 = np.copy(demanda_acum_144).astype(float)
-for t in range(120, 144):
-    target_demanda_144[t] += stock_objetivo_sabado * ((t - 119) / 24.0)
+# ==========================================
+# 3. MOTOR DE PRODUCCIÓN CON CAPACIDAD DE PLAYA (30K)
+# ==========================================
+CAPACIDAD_PLAYA = 30000
 
-produccion_h_144 = [0] * 144
+stock_actual = CAPACIDAD_PLAYA
+demanda_acumulada = 0
+produccion_acumulada = CAPACIDAD_PLAYH = CAPACIDAD_PLAYA
 
-for dia_idx, dia in enumerate(dias_semana):
+demanda_acum_144 = []
+prod_acum_144 = []
+adelanto_horas_144 = []
+produccion_efectiva_144 = []
+
+for t in range(144):
+    dia_idx = t // 24
+    h = t % 24
+    dia = dias_semana[dia_idx]
+    
+    # Demanda de esta hora
+    dem_h = demanda_h_144[t]
+    demanda_acumulada += dem_h
+    demanda_acum_144.append(demanda_acumulada)
+    
+    # Comprobar si la máquina está en su horario laboral configurado
     h_ini_str, h_fin_str = turnos_manuales[dia]
     idx_ini = int(h_ini_str.split(":")[0])
     idx_fin = 24 if h_fin_str == "24:00" else int(h_fin_str.split(":")[0])
-
-    for h in range(24):
-        if idx_ini < idx_fin:
-            if idx_ini <= h < idx_fin:
-                produccion_h_144[dia_idx * 24 + h] = vel_maquina
-        elif idx_ini > idx_fin:
-            if h >= idx_ini or h < idx_fin:
-                produccion_h_144[dia_idx * 24 + h] = vel_maquina
+    
+    en_horario = False
+    if idx_ini < idx_fin:
+        if idx_ini <= h < idx_fin:
+            en_horario = True
+    elif idx_ini > idx_fin:
+        if h >= idx_ini or h < idx_fin:
+            en_horario = True
+            
+    # La demanda vacía la playa primero en esta hora
+    stock_actual -= dem_h
+    if stock_actual < 0:
+        stock_actual = 0  # Rotura de stock
+        
+    # Producción: si está en horario y hay hueco en la playa (< 30,000)
+    prod_h = 0
+    if en_horario and stock_actual < CAPACIDAD_PLAYA:
+        espacio_libre = CAPACIDAD_PLAYA - stock_actual
+        prod_h = min(vel_maquina, espacio_libre)
+        stock_actual += prod_h
+        
+    produccion_acumulada += prod_h
+    prod_acum_144.append(produccion_acumulada)
+    produccion_efectiva_144.append(prod_h)
+    
+    # Horas de adelanto marcadas por el stock actual en la playa
+    horas_adelanto = round(stock_actual / vel_maquina, 2)
+    adelanto_horas_144.append(horas_adelanto)
 
 # ==========================================
-# 4. CONSTRUCCIÓN DE DATOS E HITOS
+# 4. CONSTRUCCIÓN DE DATOS E HITOS DE PARO/ARRANQUE
 # ==========================================
 df_completo_ajustado = []
 hitos_produccion = []
-stock_actual_00h = stock_inicial_lunes
 
 for dia_idx, dia in enumerate(dias_semana):
-    p_h_dia = produccion_h_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    p_h_dia = produccion_efectiva_144[dia_idx * 24 : (dia_idx + 1) * 24]
     dem_h_dia = demanda_h_144[dia_idx * 24 : (dia_idx + 1) * 24]
-
-    demanda_acum = np.cumsum(dem_h_dia)
-    produccion_acum = stock_actual_00h + np.cumsum(p_h_dia)
-    buffer_muelle = produccion_acum - demanda_acum
-    horas_adelanto = np.round(buffer_muelle / vel_maquina, 2)
+    
+    dem_acum_dia = demanda_acum_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    prod_acum_dia = prod_acum_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    adelanto_dia = adelanto_horas_144[dia_idx * 24 : (dia_idx + 1) * 24]
 
     horas_activas = [i for i, p in enumerate(p_h_dia) if p > 0]
     if horas_activas:
@@ -218,17 +233,17 @@ for dia_idx, dia in enumerate(dias_semana):
             hitos_produccion.append({
                 "tipo": "INICIO",
                 "eje_x": f"{dia[:3]} {horas_24[h_ini]}",
-                "y_val": produccion_acum[h_ini],
+                "y_val": prod_acum_dia[h_ini],
                 "texto": f"INICIO {horas_24[h_ini]}",
             })
             if h_fin == 23:
                 etiqueta_fin = "24:00"
                 eje_x_fin = f"{dia[:3]} 23:00"
-                y_val_fin = produccion_acum[23]
+                y_val_fin = prod_acum_dia[23]
             else:
                 etiqueta_fin = horas_24[h_fin + 1]
                 eje_x_fin = f"{dia[:3]} {horas_24[h_fin + 1]}"
-                y_val_fin = produccion_acum[h_fin + 1]
+                y_val_fin = prod_acum_dia[h_fin + 1]
 
             hitos_produccion.append({
                 "tipo": "FIN",
@@ -242,13 +257,11 @@ for dia_idx, dia in enumerate(dias_semana):
             "Eje_X": f"{dia[:3]} {horas_24[h_idx]}",
             "Dia": dia,
             "Hora": horas_24[h_idx],
-            "Demanda_Acum": demanda_acum[h_idx],
-            "Prod_Acum": produccion_acum[h_idx],
-            "Adelanto_Horas": horas_adelanto[h_idx],
+            "Demanda_Acum": dem_acum_dia[h_idx],
+            "Prod_Acum": prod_acum_dia[h_idx],
+            "Adelanto_Horas": adelanto_dia[h_idx],
             "Produciendo": 1 if p_h_dia[h_idx] > 0 else 0,
         })
-
-    stock_actual_00h = produccion_acum[23] - demanda_acum[-1]
 
 df_plot = pd.DataFrame(df_completo_ajustado)
 
@@ -262,8 +275,8 @@ fig = make_subplots(
     vertical_spacing=0.08,
     row_heights=[0.65, 0.35],
     subplot_titles=(
-        "OPM GUADIX - Turnos Persistentes (Guardado Automático)",
-        "Evolución del Colchón / Horas de Adelanto",
+        "OPM GUADIX - Control por Playa de Expedición (Máx 30k)",
+        "Evolución del Colchón / Horas de Adelanto (Stock en Playa)",
     ),
 )
 
@@ -271,7 +284,7 @@ fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Demanda_Acum"], name="De
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Producción Acumulada + Stock", line=dict(color="#2ca02c", width=2.5)), row=1, col=1)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Adelanto_Horas"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
 
-# Puntos y anotaciones
+# Puntos y anotaciones en gráfico inferior
 green_x, green_y, green_text = [], [], []
 red_x, red_y, red_text = [], [], []
 y_vals = df_plot["Adelanto_Horas"].values
@@ -330,7 +343,7 @@ x_ticks_vals = [df_plot["Eje_X"].iloc[i] for i in range(0, len(df_plot), ticks_c
 fig.update_layout(height=780, template="plotly_white", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=60, r=30, t=80, b=50))
 fig.update_xaxes(tickvals=x_ticks_vals, ticktext=x_ticks_vals, tickangle=-45, showgrid=True, row=2, col=1)
 fig.update_yaxes(title_text="Picks Acumulados", row=1, col=1, showgrid=True)
-fig.update_yaxes(title_text="Horas de Colchón", row=2, col=1, showgrid=True)
+fig.update_yaxes(title_text="Horas de Colchón (Stock Playa)", row=2, col=1, showgrid=True)
 
 # ==========================================
 # 6. RENDERIZADO EN STREAMLIT
