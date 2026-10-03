@@ -64,7 +64,7 @@ for dia in dias_semana:
 # ==========================================
 CAPACIDAD_PLAYA = 30000
 
-stock_actual = CAPACIDAD_PLAYA  # Arrancamos con la playa llena
+stock_actual = CAPACIDAD_PLAYA  
 demanda_acumulada = 0
 produccion_acumulada = CAPACIDAD_PLAYA
 
@@ -73,8 +73,8 @@ prod_acum_144 = []
 adelanto_horas_144 = []
 produccion_efectiva_144 = []
 
-# Estado inicial de la máquina: encendida si hay hueco en la playa
-maquina_encendida = True
+# Arrancamos con la máquina apagada si la playa está llena
+maquina_encendida = False
 
 for t in range(144):
     dem_h = demanda_h_144[t]
@@ -84,12 +84,12 @@ for t in range(144):
     # 1. La demanda del cliente vacía la playa en esta hora
     stock_actual -= dem_h
     if stock_actual < 0:
-        stock_actual = 0  # Contención de rotura de stock
+        stock_actual = 0  
 
-    # 2. Decisión autónoma basada exclusivamente en el límite de la playa (30k)
+    # 2. Lógica autónoma con histéresis para evitar arranques por micro-consumos
     if stock_actual >= CAPACIDAD_PLAYA:
         maquina_encendida = False
-    elif stock_actual < CAPACIDAD_PLAYA:
+    elif stock_actual <= 25000:  # Se enciende cuando baja de 25k para rellenar de forma eficiente
         maquina_encendida = True
 
     # 3. Producción efectiva de la hora
@@ -197,7 +197,6 @@ fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Demanda_Acum"], name="De
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Producción Acumulada + Stock", line=dict(color="#2ca02c", width=2.5)), row=1, col=1)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Adelanto_Horas"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
 
-# Puntos y anotaciones en gráfico inferior (sin límites fijos)
 x_vals = df_plot["Eje_X"].values
 y_vals = df_plot["Adelanto_Horas"].values
 puntos_x, puntos_y, puntos_text = [], [], []
@@ -261,7 +260,6 @@ st.plotly_chart(fig, use_container_width=True)
 st.subheader("📋 Detalle Horario de Preparación y Estado de Playa")
 st.markdown("Visualiza hora a hora la demanda, la producción generada por la máquina y el stock resultante en la playa de expedición.")
 
-# Filtros para la tabla
 col_f1, col_f2 = st.columns(2)
 with col_f1:
     dia_seleccionado = st.selectbox("Filtrar por Día:", ["Todos"] + dias_semana)
