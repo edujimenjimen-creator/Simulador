@@ -10,12 +10,12 @@ import streamlit as st
 # 0. CONFIGURACIÓN DE PÁGINA STREAMLIT
 # ==========================================
 st.set_page_config(page_title="OPM - Planificación Semanal", layout="wide")
-st.title("🏭 OPM Guadix: Planificación Autónoma con Playa y Umbral en Picks")
+st.title("🏭 OPM Guadix: Planificación Autónoma con Playa, Umbral y Arranque Diario Configurable")
 
 # ==========================================
 # 1. PARÁMETROS CONFIGURABLES (VÍA SIDEBAR)
 # ==========================================
-st.sidebar.header("⚙️️ Parámetros del Sistema")
+st.sidebar.header("⚙ Parámetros del Sistema")
 
 # 1. Capacidad máxima de la playa configurable en picks
 CAPACIDAD_PLAYA = st.sidebar.slider(
@@ -26,12 +26,12 @@ CAPACIDAD_PLAYA = st.sidebar.slider(
     step=5000,
 )
 
-# 2. Umbral de arranque configurable en PICKS (en lugar de horas)
+# 2. Umbral de arranque configurable en PICKS
 umbral_arranque = st.sidebar.slider(
     "Umbral de Arranque (Picks en playa)",
     min_value=5000,
     max_value=CAPACIDAD_PLAYA,
-    value=int(CAPACIDAD_PLAYA * 0.875),  # Valor por defecto proporcional (ej. 35.000 para 40k)
+    value=int(CAPACIDAD_PLAYA * 0.875),
     step=1000,
     help="La máquina arrancará cuando el stock en la playa baje de esta cantidad de picks."
 )
@@ -44,13 +44,20 @@ vel_maquina = st.sidebar.number_input(
     step=500,
 )
 
-hora_inicio_permitida = st.sidebar.slider(
-    "Hora mínima permitida de arranque diario",
-    min_value=0,
-    max_value=12,
-    value=4,  # Inicio a las 04:00h
-    step=1,
-)
+# 3. Configuración de Hora Mínima de Arranque por Día de la Semana
+dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+
+with st.sidebar.expander("⏰ Hora Mínima de Arranque por Día"):
+    horas_arranque_por_dia = {}
+    for dia in dias_semana:
+        horas_arranque_por_dia[dia] = st.slider(
+            f"{dia}",
+            min_value=0,
+            max_value=12,
+            value=4,  # Por defecto a las 04:00h
+            step=1,
+            key=f"arranque_{dia}"
+        )
 
 st.sidebar.subheader("📅 Demanda Diaria de Servicio (Picks)")
 demanda_servicio_por_dia = {
@@ -70,7 +77,6 @@ with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
         tiendas_por_hora.append(val)
 
 horas_24 = [f"{h:02d}:00" for h in range(24)]
-dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
 if sum(tiendas_por_hora) == 0:
     st.error("⚠️ El perfil horario de tiendas no puede sumar cero.")
@@ -87,7 +93,7 @@ for dia in dias_semana:
     demanda_h_144.extend(dem_h)
 
 # ==========================================
-# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (PLAYA Y UMBRAL EN PICKS)
+# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (CON ARRANQUE DIARIO PERSONALIZADO)
 # ==========================================
 stock_actual = float(CAPACIDAD_PLAYA)  
 demanda_acumulada = 0
@@ -102,7 +108,11 @@ produccion_efectiva_144 = []
 maquina_encendida = False
 
 for t in range(144):
+    dia_idx = t // 24
     hora_del_dia = t % 24
+    dia_actual = dias_semana[dia_idx]
+    hora_inicio_permitida_dia = horas_arranque_por_dia[dia_actual]
+
     dem_h = demanda_h_144[t]
     demanda_acumulada += dem_h
     demanda_acum_144.append(demanda_acumulada)
@@ -112,18 +122,18 @@ for t in range(144):
     if stock_actual < 0:
         stock_actual = 0  
 
-    # 2. Lógica autónoma usando el umbral en picks configurado
+    # 2. Lógica autónoma evaluando la hora de arranque específica del día actual
     if stock_actual >= CAPACIDAD_PLAYA:
         maquina_encendida = False
-    elif stock_actual <= umbral_arranque and hora_del_dia >= hora_inicio_permitida:
+    elif stock_actual <= umbral_arranque and hora_del_dia >= hora_inicio_permitida_dia:
         maquina_encendida = True
 
-    if hora_del_dia < hora_inicio_permitida and stock_actual >= CAPACIDAD_PLAYA:
+    if hora_del_dia < hora_inicio_permitida_dia and stock_actual >= CAPACIDAD_PLAYA:
         maquina_encendida = False
 
     # 3. Producción efectiva de la hora
     prod_h = 0
-    if maquina_encendida and stock_actual < CAPACIDAD_PLAYA and hora_del_dia >= hora_inicio_permitida:
+    if maquina_encendida and stock_actual < CAPACIDAD_PLAYA and hora_del_dia >= hora_inicio_permitida_dia:
         espacio_libre = CAPACIDAD_PLAYA - stock_actual
         prod_h = min(vel_maquina, espacio_libre)
         stock_actual += prod_h
@@ -221,7 +231,7 @@ fig = make_subplots(
     vertical_spacing=0.08,
     row_heights=[0.65, 0.35],
     subplot_titles=(
-        f"OPM GUADIX - Control Autónomo (Playa: {CAPACIDAD_PLAYA:,.0f} | Umbral Arranque: {umbral_arranque:,.0f} picks)",
+        f"OPM GUADIX - Control Autónomo (Playa: {CAPACIDAD_PLAYA:,.0f} | Umbral: {umbral_arranque:,.0f} picks)",
         "Evolución del Stock Exacto en Playa (Picks)",
     ),
 )
