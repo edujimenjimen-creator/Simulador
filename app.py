@@ -10,7 +10,7 @@ import streamlit as st
 # 0. CONFIGURACIÓN DE PÁGINA STREAMLIT
 # ==========================================
 st.set_page_config(page_title="OPM - Planificación Semanal", layout="wide")
-st.title("🏭 OPM Guadix: Planificación Autónoma con Playa de Expedición (30k Capacidad)")
+st.title("🏭 OPM Guadix: Planificación Autónoma (Inicio Restringido a las 04:00h)")
 
 # ==========================================
 # 1. PARÁMETROS CONFIGURABLES (VÍA SIDEBAR)
@@ -23,6 +23,14 @@ vel_maquina = st.sidebar.number_input(
     max_value=20000,
     value=5000,
     step=500,
+)
+
+hora_inicio_permitida = st.sidebar.slider(
+    "Hora mínima permitida de arranque diario",
+    min_value=0,
+    max_value=12,
+    value=4,  # <-- Configurado a las 04:00 por defecto
+    step=1,
 )
 
 st.sidebar.subheader("📅 Demanda Diaria de Servicio (Picks)")
@@ -46,7 +54,7 @@ horas_24 = [f"{h:02d}:00" for h in range(24)]
 dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
 if sum(tiendas_por_hora) == 0:
-    st.error("⚠️️ El perfil horario de tiendas no puede sumar cero.")
+    st.error("⚠️ El perfil horario de tiendas no puede sumar cero.")
     st.stop()
 
 # ==========================================
@@ -60,7 +68,7 @@ for dia in dias_semana:
     demanda_h_144.extend(dem_h)
 
 # ==========================================
-# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (PLAYA 30K)
+# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (RESTRINGIDO A PARTIR DE HORA X)
 # ==========================================
 CAPACIDAD_PLAYA = 30000
 
@@ -74,10 +82,10 @@ stock_playa_144 = []
 adelanto_horas_144 = []
 produccion_efectiva_144 = []
 
-# Arrancamos con la máquina apagada si la playa está llena
 maquina_encendida = False
 
 for t in range(144):
+    hora_del_dia = t % 24
     dem_h = demanda_h_144[t]
     demanda_acumulada += dem_h
     demanda_acum_144.append(demanda_acumulada)
@@ -87,15 +95,20 @@ for t in range(144):
     if stock_actual < 0:
         stock_actual = 0  
 
-    # 2. Lógica autónoma con histéresis
+    # 2. Lógica autónoma con restricción de hora mínima de inicio
     if stock_actual >= CAPACIDAD_PLAYA:
         maquina_encendida = False
-    elif stock_actual <= 25000:  
+    elif stock_actual <= 25000 and hora_del_dia >= hora_inicio_permitida:
         maquina_encendida = True
+
+    # Si cambia de día y el stock no está lleno, permitimos encender si toca, 
+    # pero respetando la hora de bloqueo de madrugada.
+    if hora_del_dia < hora_inicio_permitida and stock_actual >= CAPACIDAD_PLAYA:
+        maquina_encendida = False
 
     # 3. Producción efectiva de la hora
     prod_h = 0
-    if maquina_encendida and stock_actual < CAPACIDAD_PLAYA:
+    if maquina_encendida and stock_actual < CAPACIDAD_PLAYA and hora_del_dia >= hora_inicio_permitida:
         espacio_libre = CAPACIDAD_PLAYA - stock_actual
         prod_h = min(vel_maquina, espacio_libre)
         stock_actual += prod_h
@@ -142,7 +155,6 @@ for dia_idx, dia in enumerate(dias_semana):
         turnos.append((inicio_actual, prev))
 
         for h_ini, h_fin in turnos:
-            # Añadimos los picks exactos en la playa en el momento de inicio
             stock_ini_val = stock_playa_dia[h_ini]
             hitos_produccion.append({
                 "tipo": "INICIO",
@@ -179,7 +191,7 @@ for dia_idx, dia in enumerate(dias_semana):
             "Prod_Acum": prod_acum_dia[h_idx],
             "Stock_Playa": stock_playa_dia[h_idx],
             "Adelanto_Horas": adelanto_dia[h_idx],
-            "Estado": "PRODUCIENDO" if p_h_dia[h_idx] > 0 else "PARADA (Playa Llena)",
+            "Estado": "PRODUCIENDO" if p_h_dia[h_idx] > 0 else "PARADA",
         })
 
 df_plot = pd.DataFrame(df_completo_ajustado)
@@ -194,15 +206,13 @@ fig = make_subplots(
     vertical_spacing=0.08,
     row_heights=[0.65, 0.35],
     subplot_titles=(
-        "OPM GUADIX - Control Autónomo con Stock Visible en Playa (Máx 30k)",
-        "Evolución del Stock Exacto en Playa (Picks) y Horas de Adelanto",
+        f"OPM GUADIX - Control Autónomo (Bloqueo de Arranque < {hora_inicio_permitida:02d}:00h)",
+        "Evolución del Stock Exacto en Playa (Picks)",
     ),
 )
 
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Demanda_Acum"], name="Demanda Acumulada", line=dict(color="#ff7f0e", width=2.5)), row=1, col=1)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Producción Acumulada + Stock", line=dict(color="#2ca02c", width=2.5)), row=1, col=1)
-
-# GRÁFICA INFERIOR: Mostramos directamente los PICKS en la playa en lugar de solo horas
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Stock_Playa"], name="Stock en Playa (Picks)", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
 
 x_vals = df_plot["Eje_X"].values
