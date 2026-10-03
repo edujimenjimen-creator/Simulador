@@ -46,7 +46,7 @@ horas_24 = [f"{h:02d}:00" for h in range(24)]
 dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
 if sum(tiendas_por_hora) == 0:
-    st.error("⚠️ El perfil horario de tiendas no puede sumar cero.")
+    st.error("⚠️️ El perfil horario de tiendas no puede sumar cero.")
     st.stop()
 
 # ==========================================
@@ -70,6 +70,7 @@ produccion_acumulada = CAPACIDAD_PLAYA
 
 demanda_acum_144 = []
 prod_acum_144 = []
+stock_playa_144 = []
 adelanto_horas_144 = []
 produccion_efectiva_144 = []
 
@@ -86,10 +87,10 @@ for t in range(144):
     if stock_actual < 0:
         stock_actual = 0  
 
-    # 2. Lógica autónoma con histéresis para evitar arranques por micro-consumos
+    # 2. Lógica autónoma con histéresis
     if stock_actual >= CAPACIDAD_PLAYA:
         maquina_encendida = False
-    elif stock_actual <= 25000:  # Se enciende cuando baja de 25k para rellenar de forma eficiente
+    elif stock_actual <= 25000:  
         maquina_encendida = True
 
     # 3. Producción efectiva de la hora
@@ -106,7 +107,7 @@ for t in range(144):
     prod_acum_144.append(produccion_acumulada)
     produccion_efectiva_144.append(prod_h)
     
-    # Horas de adelanto (colchón en la playa)
+    stock_playa_144.append(stock_actual)
     horas_adelanto = round(stock_actual / vel_maquina, 2)
     adelanto_horas_144.append(horas_adelanto)
 
@@ -122,6 +123,7 @@ for dia_idx, dia in enumerate(dias_semana):
     
     dem_acum_dia = demanda_acum_144[dia_idx * 24 : (dia_idx + 1) * 24]
     prod_acum_dia = prod_acum_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    stock_playa_dia = stock_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
     adelanto_dia = adelanto_horas_144[dia_idx * 24 : (dia_idx + 1) * 24]
 
     horas_activas = [i for i, p in enumerate(p_h_dia) if p > 0]
@@ -140,26 +142,30 @@ for dia_idx, dia in enumerate(dias_semana):
         turnos.append((inicio_actual, prev))
 
         for h_ini, h_fin in turnos:
+            # Añadimos los picks exactos en la playa en el momento de inicio
+            stock_ini_val = stock_playa_dia[h_ini]
             hitos_produccion.append({
                 "tipo": "INICIO",
                 "eje_x": f"{dia[:3]} {horas_24[h_ini]}",
                 "y_val": prod_acum_dia[h_ini],
-                "texto": f"INICIO {horas_24[h_ini]}",
+                "texto": f"INICIO {horas_24[h_ini]}<br>({stock_ini_val:,.0f} picks)",
             })
             if h_fin == 23:
                 etiqueta_fin = "24:00"
                 eje_x_fin = f"{dia[:3]} 23:00"
                 y_val_fin = prod_acum_dia[23]
+                stock_fin_val = stock_playa_dia[23]
             else:
                 etiqueta_fin = horas_24[h_fin + 1]
                 eje_x_fin = f"{dia[:3]} {horas_24[h_fin + 1]}"
                 y_val_fin = prod_acum_dia[h_fin + 1]
+                stock_fin_val = stock_playa_dia[h_fin + 1]
 
             hitos_produccion.append({
                 "tipo": "FIN",
                 "eje_x": eje_x_fin,
                 "y_val": y_val_fin,
-                "texto": f"FIN {etiqueta_fin}",
+                "texto": f"FIN {etiqueta_fin}<br>({stock_fin_val:,.0f} picks)",
             })
 
     for h_idx in range(24):
@@ -171,7 +177,7 @@ for dia_idx, dia in enumerate(dias_semana):
             "Produccion_Hora": p_h_dia[h_idx],
             "Demanda_Acum": dem_acum_dia[h_idx],
             "Prod_Acum": prod_acum_dia[h_idx],
-            "Stock_Playa": round(adelanto_dia[h_idx] * vel_maquina, 0),
+            "Stock_Playa": stock_playa_dia[h_idx],
             "Adelanto_Horas": adelanto_dia[h_idx],
             "Estado": "PRODUCIENDO" if p_h_dia[h_idx] > 0 else "PARADA (Playa Llena)",
         })
@@ -188,30 +194,32 @@ fig = make_subplots(
     vertical_spacing=0.08,
     row_heights=[0.65, 0.35],
     subplot_titles=(
-        "OPM GUADIX - Control Autónomo por Playa de Expedición (Máx 30k)",
-        "Evolución del Colchón / Horas de Adelanto (Stock en Playa)",
+        "OPM GUADIX - Control Autónomo con Stock Visible en Playa (Máx 30k)",
+        "Evolución del Stock Exacto en Playa (Picks) y Horas de Adelanto",
     ),
 )
 
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Demanda_Acum"], name="Demanda Acumulada", line=dict(color="#ff7f0e", width=2.5)), row=1, col=1)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Producción Acumulada + Stock", line=dict(color="#2ca02c", width=2.5)), row=1, col=1)
-fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Adelanto_Horas"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
+
+# GRÁFICA INFERIOR: Mostramos directamente los PICKS en la playa en lugar de solo horas
+fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Stock_Playa"], name="Stock en Playa (Picks)", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
 
 x_vals = df_plot["Eje_X"].values
-y_vals = df_plot["Adelanto_Horas"].values
+y_picks_vals = df_plot["Stock_Playa"].values
 puntos_x, puntos_y, puntos_text = [], [], []
-ultimo_y_etiquetado = -999
+ultimo_y_etiquetado = -9999
 
-for i in range(len(y_vals)):
-    val = y_vals[i]
-    es_pico = (0 < i < len(y_vals) - 1) and (y_vals[i] > y_vals[i - 1]) and (y_vals[i] > y_vals[i + 1])
-    es_valle = (0 < i < len(y_vals) - 1) and (y_vals[i] < y_vals[i - 1]) and (y_vals[i] < y_vals[i + 1])
-    es_extremo_global = (i == 0 or i == len(y_vals) - 1)
+for i in range(len(y_picks_vals)):
+    val = y_picks_vals[i]
+    es_pico = (0 < i < len(y_picks_vals) - 1) and (y_picks_vals[i] > y_picks_vals[i - 1]) and (y_picks_vals[i] > y_picks_vals[i + 1])
+    es_valle = (0 < i < len(y_picks_vals) - 1) and (y_picks_vals[i] < y_picks_vals[i - 1]) and (y_picks_vals[i] < y_picks_vals[i + 1])
+    es_extremo_global = (i == 0 or i == len(y_picks_vals) - 1)
 
-    if (es_pico or es_valle or es_extremo_global) and abs(val - ultimo_y_etiquetado) >= 0.4:
+    if (es_pico or es_valle or es_extremo_global) and abs(val - ultimo_y_etiquetado) >= 3000:
         puntos_x.append(x_vals[i])
         puntos_y.append(val)
-        puntos_text.append(f"{val:.1f}h")
+        puntos_text.append(f"{val:,.0f} p.")
         ultimo_y_etiquetado = val
 
 if puntos_x:
@@ -223,7 +231,7 @@ for hito in hitos_produccion:
         x=hito["eje_x"], y=hito["y_val"], text=hito["texto"],
         showarrow=True, arrowhead=2, arrowsize=0.8, arrowwidth=1.2,
         arrowcolor="#d62728" if is_fin else "#238b45",
-        ax=0, ay=-28 if is_fin else 28,
+        ax=0, ay=-38 if is_fin else 38,
         bgcolor="white", bordercolor="#d62728" if is_fin else "#238b45",
         borderwidth=1, borderpad=3, font=dict(size=9, color="#d62728" if is_fin else "#1b5e20"),
         row=1, col=1
@@ -244,10 +252,10 @@ for i_dia, dia in enumerate(dias_semana):
 ticks_cada_n_horas = 3
 x_ticks_vals = [df_plot["Eje_X"].iloc[i] for i in range(0, len(df_plot), ticks_cada_n_horas)]
 
-fig.update_layout(height=780, template="plotly_white", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=60, r=30, t=80, b=50))
+fig.update_layout(height=800, template="plotly_white", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=60, r=30, t=80, b=50))
 fig.update_xaxes(tickvals=x_ticks_vals, ticktext=x_ticks_vals, tickangle=-45, showgrid=True, row=2, col=1)
 fig.update_yaxes(title_text="Picks Acumulados", row=1, col=1, showgrid=True)
-fig.update_yaxes(title_text="Horas de Colchón (Stock Playa)", row=2, col=1, showgrid=True)
+fig.update_yaxes(title_text="Stock en Playa (Picks)", range=[0, 32000], row=2, col=1, showgrid=True)
 
 # ==========================================
 # 6. RENDERIZADO EN STREAMLIT
@@ -258,7 +266,7 @@ st.plotly_chart(fig, use_container_width=True)
 # 7. TABLA DE FRANJAS Y DETALLE DE PREPARACIÓN
 # ==========================================
 st.subheader("📋 Detalle Horario de Preparación y Estado de Playa")
-st.markdown("Visualiza hora a hora la demanda, la producción generada por la máquina y el stock resultante en la playa de expedición.")
+st.markdown("Visualiza hora a hora la demanda, la producción generada y los **picks exactos** disponibles en la playa.")
 
 col_f1, col_f2 = st.columns(2)
 with col_f1:
