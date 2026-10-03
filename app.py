@@ -24,20 +24,6 @@ vel_maquina = st.sidebar.number_input(
     value=5000,
     step=500,
 )
-objetivo_horas = st.sidebar.number_input(
-    "Piso Inviolable Mínimo (Horas)",
-    min_value=1.0,
-    max_value=12.0,
-    value=4.0,
-    step=0.5,
-)
-adelanto_max_estandar = st.sidebar.number_input(
-    "Techo Máximo de Referencia (Horas)",
-    min_value=5.0,
-    max_value=24.0,
-    value=6.0,
-    step=0.5,
-)
 
 st.sidebar.subheader("📅 Demanda Diaria de Servicio (Picks)")
 demanda_servicio_por_dia = {
@@ -100,12 +86,10 @@ for t in range(144):
     if stock_actual < 0:
         stock_actual = 0  # Contención de rotura de stock
 
-    # 2. Decisión autónoma basada exclusivamente en el nivel de stock (playa)
-    # Si la playa se llena (llega a 30k), la máquina se detiene
+    # 2. Decisión autónoma basada exclusivamente en el límite de la playa (30k)
     if stock_actual >= CAPACIDAD_PLAYA:
         maquina_encendida = False
-    # Si el stock baja al piso inviolable o la máquina estaba parada y hay espacio, arranca
-    elif stock_actual <= (objetivo_horas * vel_maquina) or stock_actual < CAPACIDAD_PLAYA:
+    elif stock_actual < CAPACIDAD_PLAYA:
         maquina_encendida = True
 
     # 3. Producción efectiva de la hora
@@ -115,7 +99,6 @@ for t in range(144):
         prod_h = min(vel_maquina, espacio_libre)
         stock_actual += prod_h
         
-        # Si al producir alcanzamos los 30k exactos en esta hora, apagamos para el siguiente ciclo
         if stock_actual >= CAPACIDAD_PLAYA:
             maquina_encendida = False
 
@@ -123,7 +106,7 @@ for t in range(144):
     prod_acum_144.append(produccion_acumulada)
     produccion_efectiva_144.append(prod_h)
     
-    # Horas de adelanto marcadas por el stock resultante en la playa
+    # Horas de adelanto (colchón en la playa)
     horas_adelanto = round(stock_actual / vel_maquina, 2)
     adelanto_horas_144.append(horas_adelanto)
 
@@ -184,10 +167,13 @@ for dia_idx, dia in enumerate(dias_semana):
             "Eje_X": f"{dia[:3]} {horas_24[h_idx]}",
             "Dia": dia,
             "Hora": horas_24[h_idx],
+            "Demanda_Hora": dem_h_dia[h_idx],
+            "Produccion_Hora": p_h_dia[h_idx],
             "Demanda_Acum": dem_acum_dia[h_idx],
             "Prod_Acum": prod_acum_dia[h_idx],
+            "Stock_Playa": round(adelanto_dia[h_idx] * vel_maquina, 0),
             "Adelanto_Horas": adelanto_dia[h_idx],
-            "Produciendo": 1 if p_h_dia[h_idx] > 0 else 0,
+            "Estado": "PRODUCIENDO" if p_h_dia[h_idx] > 0 else "PARADA (Playa Llena)",
         })
 
 df_plot = pd.DataFrame(df_completo_ajustado)
@@ -211,11 +197,10 @@ fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Demanda_Acum"], name="De
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Producción Acumulada + Stock", line=dict(color="#2ca02c", width=2.5)), row=1, col=1)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Adelanto_Horas"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
 
-# Puntos y anotaciones en gráfico inferior
-green_x, green_y, green_text = [], [], []
-red_x, red_y, red_text = [], [], []
-y_vals = df_plot["Adelanto_Horas"].values
+# Puntos y anotaciones en gráfico inferior (sin límites fijos)
 x_vals = df_plot["Eje_X"].values
+y_vals = df_plot["Adelanto_Horas"].values
+puntos_x, puntos_y, puntos_text = [], [], []
 ultimo_y_etiquetado = -999
 
 for i in range(len(y_vals)):
@@ -225,20 +210,13 @@ for i in range(len(y_vals)):
     es_extremo_global = (i == 0 or i == len(y_vals) - 1)
 
     if (es_pico or es_valle or es_extremo_global) and abs(val - ultimo_y_etiquetado) >= 0.4:
-        texto_actual = f"{val:.1f}h"
-        if objetivo_horas <= val <= adelanto_max_estandar:
-            green_x.append(x_vals[i]); green_y.append(val); green_text.append(texto_actual)
-        else:
-            red_x.append(x_vals[i]); red_y.append(val); red_text.append(texto_actual)
+        puntos_x.append(x_vals[i])
+        puntos_y.append(val)
+        puntos_text.append(f"{val:.1f}h")
         ultimo_y_etiquetado = val
 
-if green_x:
-    fig.add_trace(go.Scatter(x=green_x, y=green_y, mode="markers+text", text=green_text, textposition="top center", textfont=dict(size=9, color="#2ca02c"), marker=dict(size=6, color="#2ca02c"), showlegend=False), row=2, col=1)
-if red_x:
-    fig.add_trace(go.Scatter(x=red_x, y=red_y, mode="markers+text", text=red_text, textposition="top center", textfont=dict(size=9, color="#d62728"), marker=dict(size=8, color="#d62728"), showlegend=False), row=2, col=1)
-
-fig.add_hline(y=objetivo_horas, line_dash="dash", line_color="#d62728", line_width=1.8, row=2, col=1, annotation_text=f"Piso Inviolable ({objetivo_horas}h)", annotation_position="bottom right")
-fig.add_hline(y=adelanto_max_estandar, line_dash="dot", line_color="#2ca02c", line_width=1.5, row=2, col=1, annotation_text=f"Techo Máximo ({adelanto_max_estandar}h)", annotation_position="top right")
+if puntos_x:
+    fig.add_trace(go.Scatter(x=puntos_x, y=puntos_y, mode="markers+text", text=puntos_text, textposition="top center", textfont=dict(size=9, color="#1f77b4"), marker=dict(size=6, color="#1f77b4"), showlegend=False), row=2, col=1)
 
 for hito in hitos_produccion:
     is_fin = hito["tipo"] == "FIN"
@@ -276,3 +254,28 @@ fig.update_yaxes(title_text="Horas de Colchón (Stock Playa)", row=2, col=1, sho
 # 6. RENDERIZADO EN STREAMLIT
 # ==========================================
 st.plotly_chart(fig, use_container_width=True)
+
+# ==========================================
+# 7. TABLA DE FRANJAS Y DETALLE DE PREPARACIÓN
+# ==========================================
+st.subheader("📋 Detalle Horario de Preparación y Estado de Playa")
+st.markdown("Visualiza hora a hora la demanda, la producción generada por la máquina y el stock resultante en la playa de expedición.")
+
+# Filtros para la tabla
+col_f1, col_f2 = st.columns(2)
+with col_f1:
+    dia_seleccionado = st.selectbox("Filtrar por Día:", ["Todos"] + dias_semana)
+with col_f2:
+    solo_activos = st.checkbox("Mostrar solo horas con producción activa", value=False)
+
+df_tabla = df_plot.copy()
+if dia_seleccionado != "Todos":
+    df_tabla = df_tabla[df_tabla["Dia"] == dia_seleccionado]
+if solo_activos:
+    df_tabla = df_tabla[df_tabla["Produccion_Hora"] > 0]
+
+st.dataframe(
+    df_tabla[["Eje_X", "Demanda_Hora", "Produccion_Hora", "Stock_Playa", "Adelanto_Horas", "Estado"]],
+    use_container_width=True,
+    hide_index=True
+)
