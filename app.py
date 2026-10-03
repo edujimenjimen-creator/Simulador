@@ -10,7 +10,7 @@ import streamlit as st
 # 0. CONFIGURACIÓN DE PÁGINA STREAMLIT
 # ==========================================
 st.set_page_config(page_title="OPM - Planificación Semanal", layout="wide")
-st.title("🏭 OPM Guadix: Planificación Autónoma con Playa, Umbral Porcentual y Arranque Diario")
+st.title("🏭 OPM Guadix: Planificación Autónoma con Capacidad y Arranque Diario Configurable")
 
 # ==========================================
 # 1. PARÁMETROS CONFIGURABLES (VÍA SIDEBAR)
@@ -26,20 +26,6 @@ CAPACIDAD_PLAYA = st.sidebar.slider(
     step=5000,
 )
 
-# 2. Umbral de arranque unificado en UNA SOLA SLIDER (Porcentaje de la playa)
-porcentaje_umbral = st.sidebar.slider(
-    "Umbral de Arranque (% de la Playa)",
-    min_value=10,
-    max_value=99,
-    value=88,  # 88% por defecto
-    step=1,
-    help="Porcentaje del stock máximo en playa por debajo del cual la máquina decide arrancar."
-)
-
-# Calculamos el umbral real en picks de forma dinámica y segura
-umbral_arranque = int(CAPACIDAD_PLAYA * (porcentaje_umbral / 100.0))
-st.sidebar.caption(f"📌 Umbral activo equivalente a: **{umbral_arranque:,.0f} picks** (de {CAPACIDAD_PLAYA:,.0f})")
-
 vel_maquina = st.sidebar.number_input(
     "Velocidad de Máquina (Picks/hora)",
     min_value=1000,
@@ -48,10 +34,10 @@ vel_maquina = st.sidebar.number_input(
     step=500,
 )
 
-# 3. Configuración de Hora Mínima de Arranque por Día de la Semana
+# 2. Configuración de Hora Mínima de Arranque por Día de la Semana
 dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
-with st.sidebar.expander("⏰ Hora Mínima de Arranque por Día"):
+with st.sidebar.expander("⏰ Hora de Arranque por Día"):
     horas_arranque_por_dia = {}
     for dia in dias_semana:
         horas_arranque_por_dia[dia] = st.slider(
@@ -97,7 +83,7 @@ for dia in dias_semana:
     demanda_h_144.extend(dem_h)
 
 # ==========================================
-# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO
+# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (SIN UMBRAL)
 # ==========================================
 stock_actual = float(CAPACIDAD_PLAYA)  
 demanda_acumulada = 0
@@ -126,13 +112,14 @@ for t in range(144):
     if stock_actual < 0:
         stock_actual = 0  
 
-    # 2. Lógica autónoma evaluando el umbral porcentual y la hora de arranque
-    if stock_actual >= CAPACIDAD_PLAYA:
-        maquina_encendida = False
-    elif stock_actual <= umbral_arranque and hora_del_dia >= hora_inicio_permitida_dia:
+    # 2. Lógica autónoma basada puramente en la hora de arranque programada para ese día
+    if hora_del_dia == hora_inicio_permitida_dia:
         maquina_encendida = True
+    elif stock_actual >= CAPACIDAD_PLAYA:
+        maquina_encendida = False
 
-    if hora_del_dia < hora_inicio_permitida_dia and stock_actual >= CAPACIDAD_PLAYA:
+    # Seguridad extra si la playa se llena por completo
+    if stock_actual >= CAPACIDAD_PLAYA:
         maquina_encendida = False
 
     # 3. Producción efectiva de la hora
@@ -235,7 +222,7 @@ fig = make_subplots(
     vertical_spacing=0.08,
     row_heights=[0.65, 0.35],
     subplot_titles=(
-        f"OPM GUADIX - Control Autónomo (Playa: {CAPACIDAD_PLAYA:,.0f} | Umbral: {umbral_arranque:,.0f} p. / {porcentaje_umbral}%)",
+        f"OPM GUADIX - Control por Hora de Arranque (Playa: {CAPACIDAD_PLAYA:,.0f} picks)",
         "Evolución del Stock Exacto en Playa (Picks)",
     ),
 )
