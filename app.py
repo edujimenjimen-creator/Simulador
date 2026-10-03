@@ -10,12 +10,31 @@ import streamlit as st
 # 0. CONFIGURACIÓN DE PÁGINA STREAMLIT
 # ==========================================
 st.set_page_config(page_title="OPM - Planificación Semanal", layout="wide")
-st.title("🏭 OPM Guadix: Planificación Autónoma (Inicio Restringido a las 04:00h)")
+st.title("🏭 OPM Guadix: Planificación Autónoma con Playa y Umbral en Picks")
 
 # ==========================================
 # 1. PARÁMETROS CONFIGURABLES (VÍA SIDEBAR)
 # ==========================================
-st.sidebar.header("⚙️ Parámetros del Sistema")
+st.sidebar.header("⚙️️ Parámetros del Sistema")
+
+# 1. Capacidad máxima de la playa configurable en picks
+CAPACIDAD_PLAYA = st.sidebar.slider(
+    "Capacidad Máxima de la Playa (Picks)",
+    min_value=10000,
+    max_value=100000,
+    value=40000,
+    step=5000,
+)
+
+# 2. Umbral de arranque configurable en PICKS (en lugar de horas)
+umbral_arranque = st.sidebar.slider(
+    "Umbral de Arranque (Picks en playa)",
+    min_value=5000,
+    max_value=CAPACIDAD_PLAYA,
+    value=int(CAPACIDAD_PLAYA * 0.875),  # Valor por defecto proporcional (ej. 35.000 para 40k)
+    step=1000,
+    help="La máquina arrancará cuando el stock en la playa baje de esta cantidad de picks."
+)
 
 vel_maquina = st.sidebar.number_input(
     "Velocidad de Máquina (Picks/hora)",
@@ -29,7 +48,7 @@ hora_inicio_permitida = st.sidebar.slider(
     "Hora mínima permitida de arranque diario",
     min_value=0,
     max_value=12,
-    value=4,  # <-- Configurado a las 04:00 por defecto
+    value=4,  # Inicio a las 04:00h
     step=1,
 )
 
@@ -68,13 +87,11 @@ for dia in dias_semana:
     demanda_h_144.extend(dem_h)
 
 # ==========================================
-# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (RESTRINGIDO A PARTIR DE HORA X)
+# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (PLAYA Y UMBRAL EN PICKS)
 # ==========================================
-CAPACIDAD_PLAYA = 30000
-
-stock_actual = CAPACIDAD_PLAYA  
+stock_actual = float(CAPACIDAD_PLAYA)  
 demanda_acumulada = 0
-produccion_acumulada = CAPACIDAD_PLAYA
+produccion_acumulada = float(CAPACIDAD_PLAYA)
 
 demanda_acum_144 = []
 prod_acum_144 = []
@@ -95,14 +112,12 @@ for t in range(144):
     if stock_actual < 0:
         stock_actual = 0  
 
-    # 2. Lógica autónoma con restricción de hora mínima de inicio
+    # 2. Lógica autónoma usando el umbral en picks configurado
     if stock_actual >= CAPACIDAD_PLAYA:
         maquina_encendida = False
-    elif stock_actual <= 25000 and hora_del_dia >= hora_inicio_permitida:
+    elif stock_actual <= umbral_arranque and hora_del_dia >= hora_inicio_permitida:
         maquina_encendida = True
 
-    # Si cambia de día y el stock no está lleno, permitimos encender si toca, 
-    # pero respetando la hora de bloqueo de madrugada.
     if hora_del_dia < hora_inicio_permitida and stock_actual >= CAPACIDAD_PLAYA:
         maquina_encendida = False
 
@@ -121,7 +136,7 @@ for t in range(144):
     produccion_efectiva_144.append(prod_h)
     
     stock_playa_144.append(stock_actual)
-    horas_adelanto = round(stock_actual / vel_maquina, 2)
+    horas_adelanto = round(stock_actual / vel_maquina, 2) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
 
 # ==========================================
@@ -206,7 +221,7 @@ fig = make_subplots(
     vertical_spacing=0.08,
     row_heights=[0.65, 0.35],
     subplot_titles=(
-        f"OPM GUADIX - Control Autónomo (Bloqueo de Arranque < {hora_inicio_permitida:02d}:00h)",
+        f"OPM GUADIX - Control Autónomo (Playa: {CAPACIDAD_PLAYA:,.0f} | Umbral Arranque: {umbral_arranque:,.0f} picks)",
         "Evolución del Stock Exacto en Playa (Picks)",
     ),
 )
@@ -226,7 +241,7 @@ for i in range(len(y_picks_vals)):
     es_valle = (0 < i < len(y_picks_vals) - 1) and (y_picks_vals[i] < y_picks_vals[i - 1]) and (y_picks_vals[i] < y_picks_vals[i + 1])
     es_extremo_global = (i == 0 or i == len(y_picks_vals) - 1)
 
-    if (es_pico or es_valle or es_extremo_global) and abs(val - ultimo_y_etiquetado) >= 3000:
+    if (es_pico or es_valle or es_extremo_global) and abs(val - ultimo_y_etiquetado) >= (CAPACIDAD_PLAYA * 0.1):
         puntos_x.append(x_vals[i])
         puntos_y.append(val)
         puntos_text.append(f"{val:,.0f} p.")
@@ -265,7 +280,7 @@ x_ticks_vals = [df_plot["Eje_X"].iloc[i] for i in range(0, len(df_plot), ticks_c
 fig.update_layout(height=800, template="plotly_white", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=60, r=30, t=80, b=50))
 fig.update_xaxes(tickvals=x_ticks_vals, ticktext=x_ticks_vals, tickangle=-45, showgrid=True, row=2, col=1)
 fig.update_yaxes(title_text="Picks Acumulados", row=1, col=1, showgrid=True)
-fig.update_yaxes(title_text="Stock en Playa (Picks)", range=[0, 32000], row=2, col=1, showgrid=True)
+fig.update_yaxes(title_text="Stock en Playa (Picks)", range=[0, CAPACIDAD_PLAYA * 1.05], row=2, col=1, showgrid=True)
 
 # ==========================================
 # 6. RENDERIZADO EN STREAMLIT
