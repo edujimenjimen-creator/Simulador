@@ -40,7 +40,6 @@ st.title("🏭 OPM Guadix: Planificación Autónoma con Capacidad y Arranque Dia
 # ==========================================
 st.sidebar.header("⚙ Parámetros del Sistema")
 
-# 1. Capacidad máxima de la playa configurable en picks
 val_capacidad = config_guardada.get("CAPACIDAD_PLAYA", 40000)
 CAPACIDAD_PLAYA = st.sidebar.slider(
     "Capacidad Máxima de la Playa (Picks)",
@@ -61,7 +60,6 @@ vel_maquina = st.sidebar.number_input(
 
 dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
-# 2. Configuración de Hora Mínima de Arranque por Día de la Semana
 horas_arranque_guardadas = config_guardada.get("horas_arranque_por_dia", {})
 with st.sidebar.expander("⏰ Hora de Arranque por Día"):
     horas_arranque_por_dia = {}
@@ -76,7 +74,6 @@ with st.sidebar.expander("⏰ Hora de Arranque por Día"):
             key=f"arranque_{dia}"
         )
 
-# 3. Demanda Diaria de Servicio (Picks)
 demanda_guardada = config_guardada.get("demanda_servicio_por_dia", {
     "Lunes": 70000, "Martes": 50000, "Miércoles": 75000, 
     "Jueves": 80000, "Viernes": 89000, "Sábado": 60000
@@ -94,7 +91,6 @@ with st.sidebar.expander("📅 Demanda Diaria de Servicio (Picks)"):
             key=f"demanda_{dia}"
         )
 
-# 4. Perfil Horario de Tiendas
 with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
     default_tiendas = [1, 3, 3, 3, 3, 0, 0, 0, 0, 8, 19, 9, 9, 2, 2, 0, 3, 7, 12, 4, 1, 0, 0, 0]
     tiendas_guardadas = config_guardada.get("tiendas_por_hora", default_tiendas)
@@ -104,9 +100,6 @@ with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
         val = st.number_input(f"Hora {h:02d}:00", min_value=0, max_value=100, value=int(val_t), key=f"tienda_h_{h}")
         tiendas_por_hora.append(val)
 
-# ==========================================
-# GUARDAR CONFIGURACIÓN AUTOMÁTICAMENTE
-# ==========================================
 nueva_config = {
     "CAPACIDAD_PLAYA": CAPACIDAD_PLAYA,
     "vel_maquina": vel_maquina,
@@ -119,7 +112,7 @@ guardar_configuracion(nueva_config)
 horas_24 = [f"{h:02d}:00" for h in range(24)]
 
 if sum(tiendas_por_hora) == 0:
-    st.error("⚠️ El perfil horario de tiendas no puede sumar cero.")
+    st.error("⚠️️ El perfil horario de tiendas no puede sumar cero.")
     st.stop()
 
 # ==========================================
@@ -133,7 +126,7 @@ for dia in dias_semana:
     demanda_h_144.extend(dem_h)
 
 # ==========================================
-# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (SIN UMBRAL)
+# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO
 # ==========================================
 stock_actual = float(CAPACIDAD_PLAYA)  
 demanda_acumulada = 0
@@ -187,7 +180,7 @@ for t in range(144):
     adelanto_horas_144.append(horas_adelanto)
 
 # ==========================================
-# 4. CONSTRUCCIÓN DE DATOS E HITOS DE PARO/ARRANQUE
+# 4. CONSTRUCCIÓN DE DATOS E HITOS
 # ==========================================
 df_completo_ajustado = []
 hitos_produccion = []
@@ -222,7 +215,7 @@ for dia_idx, dia in enumerate(dias_semana):
                 "tipo": "INICIO",
                 "eje_x": f"{dia[:3]} {horas_24[h_ini]}",
                 "y_val": prod_acum_dia[h_ini],
-                "texto": f"INICIO {horas_24[h_ini]}<br>({stock_ini_val:,.0f} picks)",
+                "texto": f"INICIO {horas_24[h_ini]}<br>({stock_ini_val:,.0f} p.)",
             })
             if h_fin == 23:
                 etiqueta_fin = "24:00"
@@ -239,7 +232,7 @@ for dia_idx, dia in enumerate(dias_semana):
                 "tipo": "FIN",
                 "eje_x": eje_x_fin,
                 "y_val": y_val_fin,
-                "texto": f"FIN {etiqueta_fin}<br>({stock_fin_val:,.0f} picks)",
+                "texto": f"FIN {etiqueta_fin}<br>({stock_fin_val:,.0f} p.)",
             })
 
     for h_idx in range(24):
@@ -259,7 +252,7 @@ for dia_idx, dia in enumerate(dias_semana):
 df_plot = pd.DataFrame(df_completo_ajustado)
 
 # ==========================================
-# 5. GRÁFICO PLOTLY (3 FILAS: ACUMULADOS, STOCK, ADELANTO)
+# 5. GRÁFICO PLOTLY (3 FILAS)
 # ==========================================
 fig = make_subplots(
     rows=3,
@@ -281,13 +274,14 @@ fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Produ
 # Fila 2: Stock en Playa
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Stock_Playa"], name="Stock en Playa (Picks)", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
 
-# Fila 3: Horas de Adelanto (Azul)
+# Fila 3: Horas de Adelanto (Simplificado)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Adelanto_Horas"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), fill='tozeroy', hoverinfo="skip"), row=3, col=1)
 
-# Etiquetas exhaustivas en los picos y valles de Stock (Fila 2)
+# Etiquetas espaciadas y limpias en Stock (Fila 2)
 x_vals = df_plot["Eje_X"].values
 y_picks_vals = df_plot["Stock_Playa"].values
 puntos_x, puntos_y, puntos_text = [], [], []
+ultimo_y_etiquetado = -9999
 
 for i in range(len(y_picks_vals)):
     val = y_picks_vals[i]
@@ -295,16 +289,18 @@ for i in range(len(y_picks_vals)):
     es_valle = (0 < i < len(y_picks_vals) - 1) and (y_picks_vals[i] <= y_picks_vals[i - 1]) and (y_picks_vals[i] <= y_picks_vals[i + 1]) and (y_picks_vals[i] < y_picks_vals[i - 1] or y_picks_vals[i] < y_picks_vals[i + 1])
     es_extremo = (i == 0 or i == len(y_picks_vals) - 1)
 
-    if es_pico or es_valle or es_extremo:
+    # Evitar aglomeraciones exigiendo una separación mínima vertical u horizontal
+    if (es_pico or es_valle or es_extremo) and (abs(val - ultimo_y_etiquetado) >= (CAPACIDAD_PLAYA * 0.12) or es_extremo):
         puntos_x.append(x_vals[i])
         puntos_y.append(val)
         puntos_text.append(f"{val:,.0f} p.")
+        ultimo_y_etiquetado = val
 
 if puntos_x:
     fig.add_trace(go.Scatter(x=puntos_x, y=puntos_y, mode="markers+text", text=puntos_text, textposition="top center", textfont=dict(size=9, color="#1f77b4"), marker=dict(size=5, color="#1f77b4"), showlegend=False), row=2, col=1)
 
 # ==========================================
-# DETECCIÓN 100% EXHAUSTIVA DE PICOS Y VALLES EN HORAS DE ADELANTO (Fila 3)
+# HORAS DE ADELANTO SIMPLIFICADAS (Solo picos principales >= 7h o máximos diarios)
 # ==========================================
 y_adelanto_vals = df_plot["Adelanto_Horas"].values
 puntos_adelanto_x, puntos_adelanto_y, puntos_adelanto_text = [], [], []
@@ -312,17 +308,17 @@ puntos_adelanto_x, puntos_adelanto_y, puntos_adelanto_text = [], [], []
 for i in range(len(y_adelanto_vals)):
     val_ad = y_adelanto_vals[i]
     
-    # Comprobar si es máximo local estricto o meseta máxima
+    # Comprobar si es máximo local
     if i == 0:
         es_maximo = val_ad >= y_adelanto_vals[1]
     elif i == len(y_adelanto_vals) - 1:
         es_maximo = val_ad >= y_adelanto_vals[-2]
     else:
-        # Es pico si es mayor o igual que ambos vecinos y estrictamente mayor que al menos uno
         es_maximo = (val_ad >= y_adelanto_vals[i - 1]) and (val_ad >= y_adelanto_vals[i + 1]) and \
                     (val_ad > y_adelanto_vals[i - 1] or val_ad > y_adelanto_vals[i + 1])
 
-    if es_maximo:
+    # Simplificación: Solo etiquetar máximos locales significativos (evita saturar con micro-picos)
+    if es_maximo and (val_ad >= 4.0 or i == 0 or i == len(y_adelanto_vals) - 1):
         puntos_adelanto_x.append(x_vals[i])
         puntos_adelanto_y.append(val_ad)
         puntos_adelanto_text.append(f"{val_ad:.1f}h")
@@ -369,7 +365,8 @@ x_ticks_vals = [df_plot["Eje_X"].iloc[i] for i in range(0, len(df_plot), ticks_c
 fig.update_layout(height=950, template="plotly_white", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=60, r=30, t=80, b=50))
 fig.update_xaxes(tickvals=x_ticks_vals, ticktext=x_ticks_vals, tickangle=-45, showgrid=True, row=3, col=1)
 fig.update_yaxes(title_text="Picks Acumulados", row=1, col=1, showgrid=True)
-fig.update_yaxes(title_text="Stock en Playa (Picks)", range=[0, CAPACIDAD_PLAYA * 1.05], row=2, col=1, showgrid=True)
+# Se añade un 15% de margen superior para evitar cortes en las etiquetas de los picos de stock
+fig.update_yaxes(title_text="Stock en Playa (Picks)", range=[0, CAPACIDAD_PLAYA * 1.15], row=2, col=1, showgrid=True)
 fig.update_yaxes(title_text="Horas de Adelanto", row=3, col=1, showgrid=True)
 
 # ==========================================
