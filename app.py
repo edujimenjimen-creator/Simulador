@@ -255,34 +255,7 @@ for dia_idx, dia in enumerate(dias_semana):
             })
 
     for h_idx in range(24):
-        t_global = (dia_idx * 24) + h_idx
         stock_actual_h = stock_playa_dia[h_idx]
-        
-        horas_cubiertas_count = 0
-        rango_str = "Cubre demanda inmediata"
-        if stock_actual_h > 0:
-            stock_restante = stock_actual_h
-            h_cursor = t_global + 1
-            h_inicio_cubierto = h_cursor if h_cursor < 144 else 143
-            
-            while h_cursor < 144 and stock_restante > 0:
-                dem_h_fut = demanda_h_144[h_cursor]
-                if stock_restante >= dem_h_fut:
-                    stock_restante -= dem_h_fut
-                    horas_cubiertas_count += 1
-                    h_cursor += 1
-                else:
-                    break
-                    
-            h_fin_cubierto = min(t_global + horas_cubiertas_count, 143)
-            if horas_cubiertas_count > 0:
-                dia_ini_c = dias_semana[h_inicio_cubierto // 24][:3]
-                hora_ini_c = horas_24[h_inicio_cubierto % 24]
-                dia_fin_c = dias_semana[h_fin_cubierto // 24][:3]
-                hora_fin_c = horas_24[h_fin_cubierto % 24]
-                rango_str = f"De {dia_ini_c} {hora_ini_c} a {dia_fin_c} {hora_fin_c}"
-            else:
-                rango_str = "Demanda de la hora actual"
 
         df_completo_ajustado.append({
             "Eje_X": f"{dia[:3]} {horas_24[h_idx]}",
@@ -294,7 +267,6 @@ for dia_idx, dia in enumerate(dias_semana):
             "Prod_Acum": prod_acum_dia[h_idx],
             "Stock_Playa": stock_actual_h,
             "Adelanto_Horas": adelanto_dia[h_idx],
-            "Demanda_Cubierta": rango_str,
             "Ultima_Tienda_Hora": ult_tienda_dia[h_idx],
             "Estado": "PRODUCIENDO" if p_h_dia[h_idx] > 0 else "PARADA",
         })
@@ -414,7 +386,7 @@ st.plotly_chart(fig, use_container_width=True)
 # 7. TABLA DE FRANJAS Y DETALLE DE PREPARACIÓN
 # ==========================================
 st.subheader("📋 Detalle Horario de Preparación y Estado de Playa")
-st.markdown("Visualiza hora a hora la demanda, la producción generada, los **picks exactos**, las **horas de adelanto**, la **última tienda preparada en esa hora** y el **rango total cubierto por el stock** en la playa.")
+st.markdown("Visualiza hora a hora la demanda, la producción generada, los **picks exactos**, las **horas de adelanto** y la **última tienda preparada en esa hora**.")
 
 col_f1, col_f2 = st.columns(2)
 with col_f1:
@@ -429,7 +401,7 @@ if solo_activos:
     df_tabla = df_tabla[df_tabla["Produccion_Hora"] > 0]
 
 st.dataframe(
-    df_tabla[["Eje_X", "Demanda_Hora", "Produccion_Hora", "Stock_Playa", "Adelanto_Horas", "Ultima_Tienda_Hora", "Demanda_Cubierta", "Estado"]],
+    df_tabla[["Eje_X", "Demanda_Hora", "Produccion_Hora", "Stock_Playa", "Adelanto_Horas", "Ultima_Tienda_Hora", "Estado"]],
     use_container_width=True,
     hide_index=True
 )
