@@ -203,7 +203,7 @@ for t in range(144):
     
     ultima_tienda_preparada_144.append(ultimo_texto_tienda)
 
-    # 2. Cálculo real de cuántas tiendas hay en la playa en este preciso momento (basado estrictamente en el Stock_Playa actual)
+    # 2. Cálculo real de tiendas enteras en la playa
     if stock_actual > 0:
         stock_temp_t = stock_actual
         cursor_t = t + 1
@@ -216,13 +216,10 @@ for t in range(144):
                 tiendas_count += t_f
                 cursor_t += 1
             else:
-                # Si cubre una parte proporcional de la hora
-                if dem_f > 0:
-                    tiendas_count += (stock_temp_t / dem_f) * t_f
                 break
-        tiendas_en_playa_144.append(round(tiendas_count, 1))
+        tiendas_en_playa_144.append(int(tiendas_count))
     else:
-        tiendas_en_playa_144.append(0.0)
+        tiendas_en_playa_144.append(0)
 
 # ==========================================
 # 4. CONSTRUCCIÓN DE DATOS E HITOS
@@ -415,7 +412,7 @@ st.plotly_chart(fig, use_container_width=True)
 # 7. TABLA DE FRANJAS Y DETALLE DE PREPARACIÓN
 # ==========================================
 st.subheader("📋 Detalle Horario de Preparación y Estado de Playa")
-st.markdown("Visualiza hora a hora la demanda, la producción generada, los **picks exactos**, las **horas de adelanto**, la **última tienda preparada** y las **tiendas reales almacenadas en la playa**.")
+st.markdown("Visualiza hora a hora la demanda, la producción generada, los **picks exactos**, las **horas de adelanto**, la **última tienda preparada** y las **tiendas enteras reales** almacenadas en la playa.")
 
 col_f1, col_f2 = st.columns(2)
 with col_f1:
