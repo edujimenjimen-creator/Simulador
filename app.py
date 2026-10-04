@@ -126,7 +126,7 @@ for dia in dias_semana:
     demanda_h_144.extend(dem_h)
 
 # ==========================================
-# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO
+# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (Con Puntero de Preparación FIFO)
 # ==========================================
 stock_actual = float(CAPACIDAD_PLAYA)  
 demanda_acumulada = 0
@@ -137,6 +137,11 @@ prod_acum_144 = []
 stock_playa_144 = []
 adelanto_horas_144 = []
 produccion_efectiva_144 = []
+ultima_tienda_preparada_144 = []
+
+# Inicializamos el puntero de la demanda que vamos cubriendo (simulando FIFO desde el inicio)
+# Al empezar con stock lleno de capacidad inicial, cubrimos desde la hora 0 en adelante
+cursor_demanda_global = 0
 
 maquina_encendida = False
 
@@ -174,13 +179,33 @@ for t in range(144):
     produccion_acumulada += prod_h
     prod_acum_144.append(produccion_acumulada)
     produccion_efectiva_144.append(prod_h)
-    
     stock_playa_144.append(stock_actual)
+    
     horas_adelanto = round(stock_actual / vel_maquina, 2) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
 
+    # Cálculo de la hora exacta de la última tienda que se está preparando con la producción de esta hora
+    if prod_h > 0:
+        # Avanzamos el cursor de demanda según los picks producidos en esta hora
+        picks_restantes_prod = prod_h
+        h_inicio_lote = cursor_demanda_global
+        
+        while picks_restantes_prod > 0 and cursor_demanda_global < 144:
+            dem_pendiente = demanda_h_144[cursor_demanda_global]
+            # Cuánto falta por consumir de esta hora de demanda específica
+            # (aquí simplificamos avanzando el cursor de forma acumulativa por bloques de producción)
+            cursor_demanda_global += 1
+            picks_restantes_prod -= dem_pendiente
+            
+        h_fin_lote = min(max(cursor_demanda_global - 1, 0), 143)
+        d_fin = dias_semana[h_fin_lote // 24][:3]
+        h_fin_Str = horas_24[h_fin_lote % 24]
+        ultima_tienda_preparada_144.append(f"{d_fin} {h_fin_Str}")
+    else:
+        ultima_tienda_preparada_144.append("Sin producción")
+
 # ==========================================
-# 4. CONSTRUCCIÓN DE DATOS E HITOS (Con Demanda Cubierta FIFO)
+# 4. CONSTRUCCIÓN DE DATOS E HITOS
 # ==========================================
 df_completo_ajustado = []
 hitos_produccion = []
@@ -193,6 +218,7 @@ for dia_idx, dia in enumerate(dias_semana):
     prod_acum_dia = prod_acum_144[dia_idx * 24 : (dia_idx + 1) * 24]
     stock_playa_dia = stock_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
     adelanto_dia = adelanto_horas_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    ult_tienda_dia = ultima_tienda_preparada_144[dia_idx * 24 : (dia_idx + 1) * 24]
 
     horas_activas = [i for i, p in enumerate(p_h_dia) if p > 0]
     if horas_activas:
@@ -239,7 +265,7 @@ for dia_idx, dia in enumerate(dias_semana):
         t_global = (dia_idx * 24) + h_idx
         stock_actual_h = stock_playa_dia[h_idx]
         
-        # Calcular rango de demanda / tiendas que cubre este stock (FIFO)
+        # Calcular rango de demanda / tiendas que cubre este stock total (Stock en Playa)
         horas_cubiertas_count = 0
         rango_str = "Cubre demanda inmediata"
         if stock_actual_h > 0:
@@ -277,6 +303,7 @@ for dia_idx, dia in enumerate(dias_semana):
             "Stock_Playa": stock_actual_h,
             "Adelanto_Horas": adelanto_dia[h_idx],
             "Demanda_Cubierta": rango_str,
+            "Ultima_Tienda_Hora": ult_tienda_dia[h_idx],
             "Estado": "PRODUCIENDO" if p_h_dia[h_idx] > 0 else "PARADA",
         })
 
@@ -402,7 +429,7 @@ st.plotly_chart(fig, use_container_width=True)
 # 7. TABLA DE FRANJAS Y DETALLE DE PREPARACIÓN
 # ==========================================
 st.subheader("📋 Detalle Horario de Preparación y Estado de Playa")
-st.markdown("Visualiza hora a hora la demanda, la producción generada, los **picks exactos**, las **horas de adelanto** y el **rango de tiendas/demanda futura** que está cubriendo el stock actual.")
+st.markdown("Visualiza hora a hora la demanda, la producción generada, los **picks exactos**, las **horas de adelanto**, la **última tienda preparada en esa hora** y el **rango total cubierto por el stock** en la playa.")
 
 col_f1, col_f2 = st.columns(2)
 with col_f1:
@@ -417,7 +444,7 @@ if solo_activos:
     df_tabla = df_tabla[df_tabla["Produccion_Hora"] > 0]
 
 st.dataframe(
-    df_tabla[["Eje_X", "Demanda_Hora", "Produccion_Hora", "Stock_Playa", "Adelanto_Horas", "Demanda_Cubierta", "Estado"]],
+    df_tabla[["Eje_X", "Demanda_Hora", "Produccion_Hora", "Stock_Playa", "Adelanto_Horas", "Ultima_Tienda_Hora", "Demanda_Cubierta", "Estado"]],
     use_container_width=True,
     hide_index=True
 )
