@@ -197,7 +197,7 @@ for t in range(144):
     horas_adelanto = round(stock_actual / vel_maquina, 2) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
 
-    # Actualizar balance restando las tiendas que cargan en esta hora y sumando las producidas
+    # Actualizar balance de tiendas de forma síncrona en la misma hora
     tiendas_actuales = tiendas_actuales - tiendas_salen_h + tiendas_entran_h
     if tiendas_actuales < 0:
         tiendas_actuales = 0
