@@ -197,17 +197,10 @@ for t in range(144):
     horas_adelanto = round(stock_actual / vel_maquina, 2) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
 
-    # Actualizar balance de tiendas restando las que cargan y sumando las producidas
+    # Actualizar balance restando las tiendas que cargan en esta hora y sumando las producidas
     tiendas_actuales = tiendas_actuales - tiendas_salen_h + tiendas_entran_h
     if tiendas_actuales < 0:
         tiendas_actuales = 0
-    
-    dem_dia_sync = demanda_servicio_por_dia[dia_actual]
-    ppt_sync = dem_dia_sync / sum(tiendas_por_hora) if sum(tiendas_por_hora) > 0 else 1000
-    tiendas_por_stock_real = round(stock_actual / ppt_sync) if ppt_sync > 0 else 0
-    
-    if prod_h == 0:
-        tiendas_actuales = tiendas_por_stock_real
 
     tiendas_en_playa_144.append(int(round(tiendas_actuales)))
 
