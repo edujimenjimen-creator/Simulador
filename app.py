@@ -33,7 +33,7 @@ config_guardada = cargar_configuracion()
 # 0. CONFIGURACIÓN DE PÁGINA STREAMLIT
 # ==========================================
 st.set_page_config(page_title="Planificación Semanal", layout="wide")
-st.title("🏭 OPM Guadix: Planificación semanal")
+st.title("🏭 OPM : Planificación semanal")
 
 # ==========================================
 # 1. PARÁMETROS CONFIGURABLES (VÍA SIDEBAR)
