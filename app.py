@@ -142,11 +142,10 @@ stock_playa_144 = []
 adelanto_horas_144 = []
 produccion_efectiva_144 = []
 ultima_tienda_preparada_144 = []
-num_tiendas_preparadas_144 = []
+tiendas_en_playa_144 = []
 
 maquina_encendida = False
 ultimo_texto_tienda = "Lun 00:00"
-ultimo_num_tiendas = sum(tiendas_por_hora[:1])
 
 for t in range(144):
     dia_idx = t // 24
@@ -187,7 +186,7 @@ for t in range(144):
     horas_adelanto = round(stock_actual / vel_maquina, 2) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
 
-    # Cálculo exacto de la última tienda y el acumulado de tiendas preparadas por el stock actual
+    # 1. Cálculo de la última tienda horaria alcanzada
     if stock_actual > 0:
         stock_temp = stock_actual
         cursor_sim = t
@@ -201,12 +200,29 @@ for t in range(144):
         d_fin = dias_semana[cursor_sim // 24][:3]
         h_fin_str = horas_24[cursor_sim % 24]
         ultimo_texto_tienda = f"{d_fin} {h_fin_str}"
-        
-        # Sumamos las tiendas desde la hora 0 hasta el cursor simulado
-        ultimo_num_tiendas = sum(tiendas_h_144[:cursor_sim + 1])
     
     ultima_tienda_preparada_144.append(ultimo_texto_tienda)
-    num_tiendas_preparadas_144.append(ultimo_num_tiendas)
+
+    # 2. Cálculo real de cuántas tiendas hay en la playa en este preciso momento (basado estrictamente en el Stock_Playa actual)
+    if stock_actual > 0:
+        stock_temp_t = stock_actual
+        cursor_t = t + 1
+        tiendas_count = 0
+        while cursor_t < 144 and stock_temp_t > 0:
+            dem_f = demanda_h_144[cursor_t]
+            t_f = tiendas_h_144[cursor_t]
+            if stock_temp_t >= dem_f:
+                stock_temp_t -= dem_f
+                tiendas_count += t_f
+                cursor_t += 1
+            else:
+                # Si cubre una parte proporcional de la hora
+                if dem_f > 0:
+                    tiendas_count += (stock_temp_t / dem_f) * t_f
+                break
+        tiendas_en_playa_144.append(round(tiendas_count, 1))
+    else:
+        tiendas_en_playa_144.append(0.0)
 
 # ==========================================
 # 4. CONSTRUCCIÓN DE DATOS E HITOS
@@ -223,7 +239,7 @@ for dia_idx, dia in enumerate(dias_semana):
     stock_playa_dia = stock_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
     adelanto_dia = adelanto_horas_144[dia_idx * 24 : (dia_idx + 1) * 24]
     ult_tienda_dia = ultima_tienda_preparada_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    num_tiendas_dia = num_tiendas_preparadas_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    tiendas_playa_dia = tiendas_en_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
 
     horas_activas = [i for i, p in enumerate(p_h_dia) if p > 0]
     if horas_activas:
@@ -280,7 +296,7 @@ for dia_idx, dia in enumerate(dias_semana):
             "Stock_Playa": stock_actual_h,
             "Adelanto_Horas": adelanto_dia[h_idx],
             "Ultima_Tienda_Hora": ult_tienda_dia[h_idx],
-            "Tiendas_Preparadas_Acum": num_tiendas_dia[h_idx],
+            "Tiendas_En_Playa": tiendas_playa_dia[h_idx],
             "Estado": "PRODUCIENDO" if p_h_dia[h_idx] > 0 else "PARADA",
         })
 
@@ -399,7 +415,7 @@ st.plotly_chart(fig, use_container_width=True)
 # 7. TABLA DE FRANJAS Y DETALLE DE PREPARACIÓN
 # ==========================================
 st.subheader("📋 Detalle Horario de Preparación y Estado de Playa")
-st.markdown("Visualiza hora a hora la demanda, la producción generada, los **picks exactos**, las **horas de adelanto**, la **última tienda preparada** y el **número total de tiendas preparadas** en ese momento.")
+st.markdown("Visualiza hora a hora la demanda, la producción generada, los **picks exactos**, las **horas de adelanto**, la **última tienda preparada** y las **tiendas reales almacenadas en la playa**.")
 
 col_f1, col_f2 = st.columns(2)
 with col_f1:
@@ -414,7 +430,7 @@ if solo_activos:
     df_tabla = df_tabla[df_tabla["Produccion_Hora"] > 0]
 
 st.dataframe(
-    df_tabla[["Eje_X", "Demanda_Hora", "Produccion_Hora", "Stock_Playa", "Adelanto_Horas", "Ultima_Tienda_Hora", "Tiendas_Preparadas_Acum", "Estado"]],
+    df_tabla[["Eje_X", "Demanda_Hora", "Produccion_Hora", "Stock_Playa", "Adelanto_Horas", "Ultima_Tienda_Hora", "Tiendas_En_Playa", "Estado"]],
     use_container_width=True,
     hide_index=True
 )
