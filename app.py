@@ -7,6 +7,29 @@ from plotly.subplots import make_subplots
 import streamlit as st
 
 # ==========================================
+# 0. PERSISTENCIA DE CONFIGURACIÓN (JSON)
+# ==========================================
+CONFIG_FILE = "config_opm.json"
+
+def cargar_configuracion():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def guardar_configuracion(config):
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        st.sidebar.error(f"Error al guardar configuración: {e}")
+
+config_guardada = cargar_configuracion()
+
+# ==========================================
 # 0. CONFIGURACIÓN DE PÁGINA STREAMLIT
 # ==========================================
 st.set_page_config(page_title="OPM - Planificación Semanal", layout="wide")
@@ -18,53 +41,77 @@ st.title("🏭 OPM Guadix: Planificación Autónoma con Capacidad y Arranque Dia
 st.sidebar.header("⚙ Parámetros del Sistema")
 
 # 1. Capacidad máxima de la playa configurable en picks
+val_capacidad = config_guardada.get("CAPACIDAD_PLAYA", 40000)
 CAPACIDAD_PLAYA = st.sidebar.slider(
     "Capacidad Máxima de la Playa (Picks)",
     min_value=10000,
     max_value=100000,
-    value=40000,
+    value=val_capacidad,
     step=5000,
 )
 
+val_vel = config_guardada.get("vel_maquina", 5000)
 vel_maquina = st.sidebar.number_input(
     "Velocidad de Máquina (Picks/hora)",
     min_value=1000,
     max_value=20000,
-    value=5000,
+    value=val_vel,
     step=500,
 )
 
 # 2. Configuración de Hora Mínima de Arranque por Día de la Semana
 dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+horas_arranque_guardadas = config_guardada.get("horas_arranque_por_dia", {})
 
 with st.sidebar.expander("⏰ Hora de Arranque por Día"):
     horas_arranque_por_dia = {}
     for dia in dias_semana:
+        val_arranque = horas_arranque_guardadas.get(dia, 4)
         horas_arranque_por_dia[dia] = st.slider(
             f"{dia}",
             min_value=0,
             max_value=12,
-            value=4,  # Por defecto a las 04:00h
+            value=val_arranque,
             step=1,
             key=f"arranque_{dia}"
         )
 
 st.sidebar.subheader("📅 Demanda Diaria de Servicio (Picks)")
-demanda_servicio_por_dia = {
-    "Lunes": st.sidebar.number_input("Lunes", min_value=10000, max_value=200000, value=70000, step=5000),
-    "Martes": st.sidebar.number_input("Martes", min_value=10000, max_value=200000, value=50000, step=5000),
-    "Miércoles": st.sidebar.number_input("Miércoles", min_value=10000, max_value=200000, value=75000, step=5000),
-    "Jueves": st.sidebar.number_input("Jueves", min_value=10000, max_value=200000, value=80000, step=5000),
-    "Viernes": st.sidebar.number_input("Viernes", min_value=10000, max_value=200000, value=89000, step=5000),
-    "Sábado": st.sidebar.number_input("Sábado", min_value=10000, max_value=200000, value=60000, step=5000),
-}
+demanda_guardada = config_guardada.get("demanda_servicio_por_dia", {
+    "Lunes": 70000, "Martes": 50000, "Miércoles": 75000, 
+    "Jueves": 80000, "Viernes": 89000, "Sábado": 60000
+})
+
+demanda_servicio_por_dia = {}
+for dia in dias_semana:
+    demanda_servicio_por_dia[dia] = st.sidebar.number_input(
+        dia, 
+        min_value=10000, 
+        max_value=200000, 
+        value=int(demanda_guardada.get(dia, 70000)), 
+        step=5000
+    )
 
 with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
     default_tiendas = [1, 3, 3, 3, 3, 0, 0, 0, 0, 8, 19, 9, 9, 2, 2, 0, 3, 7, 12, 4, 1, 0, 0, 0]
+    tiendas_guardadas = config_guardada.get("tiendas_por_hora", default_tiendas)
     tiendas_por_hora = []
     for h in range(24):
-        val = st.number_input(f"Hora {h:02d}:00", min_value=0, max_value=100, value=default_tiendas[h], key=f"tienda_h_{h}")
+        val_t = tiendas_guardadas[h] if h < len(tiendas_guardadas) else default_tiendas[h]
+        val = st.number_input(f"Hora {h:02d}:00", min_value=0, max_value=100, value=int(val_t), key=f"tienda_h_{h}")
         tiendas_por_hora.append(val)
+
+# ==========================================
+# GUARDAR CONFIGURACIÓN AUTOMÁTICAMENTE
+# ==========================================
+nueva_config = {
+    "CAPACIDAD_PLAYA": CAPACIDAD_PLAYA,
+    "vel_maquina": vel_maquina,
+    "horas_arranque_por_dia": horas_arranque_por_dia,
+    "demanda_servicio_por_dia": demanda_servicio_por_dia,
+    "tiendas_por_hora": tiendas_por_hora
+}
+guardar_configuracion(nueva_config)
 
 horas_24 = [f"{h:02d}:00" for h in range(24)]
 
