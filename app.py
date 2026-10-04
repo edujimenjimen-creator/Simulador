@@ -116,17 +116,21 @@ if sum(tiendas_por_hora) == 0:
     st.stop()
 
 # ==========================================
-# 2. PREPARACIÓN DE DEMANDA HORA A HORA (144h)
+# 2. PREPARACIÓN DE DEMANDA Y TIENDAS HORA A HORA (144h)
 # ==========================================
 demanda_h_144 = []
+tiendas_h_144 = []
 for dia in dias_semana:
     dem_total = demanda_servicio_por_dia[dia]
-    factor = dem_total / sum(tiendas_por_hora)
+    suma_t = sum(tiendas_por_hora)
+    factor = dem_total / suma_t if suma_t > 0 else 0
+    
     dem_h = [round(t * factor) for t in tiendas_por_hora]
     demanda_h_144.extend(dem_h)
+    tiendas_h_144.extend(tiendas_por_hora)
 
 # ==========================================
-# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (Con Puntero de Tienda Basado en Stock en Playa)
+# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO
 # ==========================================
 stock_actual = float(CAPACIDAD_PLAYA)  
 demanda_acumulada = 0
@@ -138,9 +142,11 @@ stock_playa_144 = []
 adelanto_horas_144 = []
 produccion_efectiva_144 = []
 ultima_tienda_preparada_144 = []
+num_tiendas_preparadas_144 = []
 
 maquina_encendida = False
 ultimo_texto_tienda = "Lun 00:00"
+ultimo_num_tiendas = sum(tiendas_por_hora[:1])
 
 for t in range(144):
     dia_idx = t // 24
@@ -170,7 +176,7 @@ for t in range(144):
         prod_h = min(vel_maquina, espacio_libre)
         stock_actual += prod_h
         
-        if stock_actual >= CAPACIDAD_PLAYY if 'CAPACIDAD_PLAYY' in locals() else stock_actual >= CAPACIDAD_PLAYA:
+        if stock_actual >= CAPACIDAD_PLAYA:
             maquina_encendida = False
 
     produccion_acumulada += prod_h
@@ -181,7 +187,7 @@ for t in range(144):
     horas_adelanto = round(stock_actual / vel_maquina, 2) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
 
-    # Cálculo exacto de la última tienda cubierta por el stock actual en la playa (FIFO proyectado)
+    # Cálculo exacto de la última tienda y el acumulado de tiendas preparadas por el stock actual
     if stock_actual > 0:
         stock_temp = stock_actual
         cursor_sim = t
@@ -195,8 +201,12 @@ for t in range(144):
         d_fin = dias_semana[cursor_sim // 24][:3]
         h_fin_str = horas_24[cursor_sim % 24]
         ultimo_texto_tienda = f"{d_fin} {h_fin_str}"
+        
+        # Sumamos las tiendas desde la hora 0 hasta el cursor simulado
+        ultimo_num_tiendas = sum(tiendas_h_144[:cursor_sim + 1])
     
     ultima_tienda_preparada_144.append(ultimo_texto_tienda)
+    num_tiendas_preparadas_144.append(ultimo_num_tiendas)
 
 # ==========================================
 # 4. CONSTRUCCIÓN DE DATOS E HITOS
@@ -213,6 +223,7 @@ for dia_idx, dia in enumerate(dias_semana):
     stock_playa_dia = stock_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
     adelanto_dia = adelanto_horas_144[dia_idx * 24 : (dia_idx + 1) * 24]
     ult_tienda_dia = ultima_tienda_preparada_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    num_tiendas_dia = num_tiendas_preparadas_144[dia_idx * 24 : (dia_idx + 1) * 24]
 
     horas_activas = [i for i, p in enumerate(p_h_dia) if p > 0]
     if horas_activas:
@@ -269,6 +280,7 @@ for dia_idx, dia in enumerate(dias_semana):
             "Stock_Playa": stock_actual_h,
             "Adelanto_Horas": adelanto_dia[h_idx],
             "Ultima_Tienda_Hora": ult_tienda_dia[h_idx],
+            "Tiendas_Preparadas_Acum": num_tiendas_dia[h_idx],
             "Estado": "PRODUCIENDO" if p_h_dia[h_idx] > 0 else "PARADA",
         })
 
@@ -387,7 +399,7 @@ st.plotly_chart(fig, use_container_width=True)
 # 7. TABLA DE FRANJAS Y DETALLE DE PREPARACIÓN
 # ==========================================
 st.subheader("📋 Detalle Horario de Preparación y Estado de Playa")
-st.markdown("Visualiza hora a hora la demanda, la producción generada, los **picks exactos**, las **horas de adelanto** y la **última tienda preparada en esa hora**.")
+st.markdown("Visualiza hora a hora la demanda, la producción generada, los **picks exactos**, las **horas de adelanto**, la **última tienda preparada** y el **número total de tiendas preparadas** en ese momento.")
 
 col_f1, col_f2 = st.columns(2)
 with col_f1:
@@ -402,7 +414,7 @@ if solo_activos:
     df_tabla = df_tabla[df_tabla["Produccion_Hora"] > 0]
 
 st.dataframe(
-    df_tabla[["Eje_X", "Demanda_Hora", "Produccion_Hora", "Stock_Playa", "Adelanto_Horas", "Ultima_Tienda_Hora", "Estado"]],
+    df_tabla[["Eje_X", "Demanda_Hora", "Produccion_Hora", "Stock_Playa", "Adelanto_Horas", "Ultima_Tienda_Hora", "Tiendas_Preparadas_Acum", "Estado"]],
     use_container_width=True,
     hide_index=True
 )
