@@ -315,25 +315,48 @@ fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Adelanto_Horas"], name="
 
 x_vals = df_plot["Eje_X"].values
 y_picks_vals = df_plot["Stock_Playa"].values
+
+# ETIQUETAS LIMPIAS PARA EL STOCK EN PLAYA (MÁXIMOS Y VALLES SIN DUPLICADOS)
 puntos_x, puntos_y, puntos_text = [], [], []
 ultimo_y_etiquetado = -9999
 
 for i in range(len(y_picks_vals)):
     val = y_picks_vals[i]
-    es_pico = (0 < i < len(y_picks_vals) - 1) and (y_picks_vals[i] >= y_picks_vals[i - 1]) and (y_picks_vals[i] >= y_picks_vals[i + 1]) and (y_picks_vals[i] > y_picks_vals[i - 1] or y_picks_vals[i] > y_picks_vals[i + 1])
-    es_valle = (0 < i < len(y_picks_vals) - 1) and (y_picks_vals[i] <= y_picks_vals[i - 1]) and (y_picks_vals[i] <= y_picks_vals[i + 1]) and (y_picks_vals[i] < y_picks_vals[i - 1] or y_picks_vals[i] < y_picks_vals[i + 1])
     es_extremo = (i == 0 or i == len(y_picks_vals) - 1)
+    
+    if i == 0:
+        es_pico = val >= y_picks_vals[1]
+        es_valle = val <= y_picks_vals[1]
+    elif i == len(y_picks_vals) - 1:
+        es_pico = val >= y_picks_vals[-2]
+        es_valle = val <= y_picks_vals[-2]
+    else:
+        es_pico = (val >= y_picks_vals[i - 1]) and (val >= y_picks_vals[i + 1]) and \
+                  (val > y_picks_vals[i - 1] or val > y_picks_vals[i + 1])
+        es_valle = (val <= y_picks_vals[i - 1]) and (val <= y_picks_vals[i + 1]) and \
+                   (val < y_picks_vals[i - 1] or val < y_picks_vals[i + 1])
 
-    if (es_pico or es_valle or es_extremo) and (abs(val - ultimo_y_etiquetado) >= (CAPACIDAD_PLAYA * 0.12) or es_extremo):
+    debe_etiquetar = es_extremo or ((es_pico or es_valle) and abs(val - ultimo_y_etiquetado) >= (CAPACIDAD_PLAYA * 0.08))
+
+    if debe_etiquetar:
         puntos_x.append(x_vals[i])
         puntos_y.append(val)
         puntos_text.append(f"{val:,.0f} p.")
         ultimo_y_etiquetado = val
 
 if puntos_x:
-    fig.add_trace(go.Scatter(x=puntos_x, y=puntos_y, mode="markers+text", text=puntos_text, textposition="top center", textfont=dict(size=9, color="#1f77b4"), marker=dict(size=5, color="#1f77b4"), showlegend=False), row=2, col=1)
+    fig.add_trace(go.Scatter(
+        x=puntos_x, 
+        y=puntos_y, 
+        mode="markers+text", 
+        text=puntos_text, 
+        textposition="top center", 
+        textfont=dict(size=9, color="#1f77b4"), 
+        marker=dict(size=5, color="#1f77b4"), 
+        showlegend=False
+    ), row=2, col=1)
 
-# ETIQUETAS LIMPIAS (MÁXIMOS Y VALLES SIN DUPLICADOS)
+# ETIQUETAS LIMPIAS PARA HORAS DE ADELANTO (MÁXIMOS Y VALLES SIN DUPLICADOS)
 y_adelanto_vals = df_plot["Adelanto_Horas"].values
 puntos_adelanto_x, puntos_adelanto_y, puntos_adelanto_text = [], [], []
 ultimo_val_etiquetado = -9999
@@ -404,7 +427,9 @@ x_ticks_vals = [df_plot["Eje_X"].iloc[i] for i in range(0, len(df_plot), ticks_c
 fig.update_layout(height=950, template="plotly_white", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=60, r=30, t=80, b=50))
 fig.update_xaxes(tickvals=x_ticks_vals, ticktext=x_ticks_vals, tickangle=-45, showgrid=True, row=3, col=1)
 fig.update_yaxes(title_text="Picks Acumulados", row=1, col=1, showgrid=True)
-fig.update_yaxes(title_text="Stock en Playa (Picks)", range=[0, CAPACIDAD_PLAYA * 1.15], row=2, col=1, showgrid=True)
+# Rango adaptativo para el Stock en Playa para aprovechar mejor el espacio vertical
+min_stock_real = min(y_picks_vals) * 0.85
+fig.update_yaxes(title_text="Stock en Playa (Picks)", range=[min_stock_real, CAPACIDAD_PLAYA * 1.10], row=2, col=1, showgrid=True)
 fig.update_yaxes(title_text="Horas de Adelanto", row=3, col=1, showgrid=True)
 
 # ==========================================
