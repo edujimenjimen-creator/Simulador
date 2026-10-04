@@ -147,10 +147,6 @@ tiendas_en_playa_144 = []
 maquina_encendida = False
 ultimo_texto_tienda = "Lun 00:00"
 
-dem_dia_inicial = demanda_servicio_por_dia[dias_semana[0]]
-picks_por_tienda_inicial = dem_dia_inicial / sum(tiendas_por_hora) if sum(tiendas_por_hora) > 0 else 1000
-tiendas_actuales = round(stock_actual / picks_por_tienda_inicial)
-
 for t in range(144):
     dia_idx = t // 24
     hora_del_dia = t % 24
@@ -158,8 +154,6 @@ for t in range(144):
     hora_inicio_permitida_dia = horas_arranque_por_dia[dia_actual]
 
     dem_h = demanda_h_144[t]
-    tiendas_salen_h = tiendas_por_hora[hora_del_dia]
-
     demanda_acumulada += dem_h
     demanda_acum_144.append(demanda_acumulada)
     
@@ -176,15 +170,10 @@ for t in range(144):
         maquina_encendida = False
 
     prod_h = 0
-    tiendas_entran_h = 0
     if maquina_encendida and stock_actual < CAPACIDAD_PLAYA and hora_del_dia >= hora_inicio_permitida_dia:
         espacio_libre = CAPACIDAD_PLAYA - stock_actual
         prod_h = min(vel_maquina, espacio_libre)
         stock_actual += prod_h
-        
-        dem_dia_actual = demanda_servicio_por_dia[dia_actual]
-        ppt_actual = dem_dia_actual / sum(tiendas_por_hora) if sum(tiendas_por_hora) > 0 else 1000
-        tiendas_entran_h = prod_h / ppt_actual if ppt_actual > 0 else 0
         
         if stock_actual >= CAPACIDAD_PLAYA:
             maquina_encendida = False
@@ -196,13 +185,6 @@ for t in range(144):
     
     horas_adelanto = round(stock_actual / vel_maquina, 2) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
-
-    # Actualizar balance de tiendas de forma síncrona en la misma hora
-    tiendas_actuales = tiendas_actuales - tiendas_salen_h + tiendas_entran_h
-    if tiendas_actuales < 0:
-        tiendas_actuales = 0
-
-    tiendas_en_playa_144.append(int(round(tiendas_actuales)))
 
     # 1. Cálculo de la última tienda horaria alcanzada (FIFO Proyectado)
     if stock_actual > 0:
@@ -220,6 +202,17 @@ for t in range(144):
         ultimo_texto_tienda = f"{d_fin} {h_fin_str}"
     
     ultima_tienda_preparada_144.append(ultimo_texto_tienda)
+
+    # 2. Cálculo directo y perfecto de tiendas en playa basado estrictamente en el stock actual de picks
+    dem_dia_actual = demanda_servicio_por_dia[dia_actual]
+    tiendas_dia_total = sum(tiendas_por_hora)
+    picks_por_tienda_dia = dem_dia_actual / tiendas_dia_total if tiendas_dia_total > 0 else 1000
+    
+    if stock_actual > 0 and picks_por_tienda_dia > 0:
+        tiendas_en_playa = round(stock_actual / picks_por_tienda_dia)
+        tiendas_en_playa_144.append(int(tiendas_en_playa))
+    else:
+        tiendas_en_playa_144.append(0)
 
 # ==========================================
 # 4. CONSTRUCCIÓN DE DATOS E HITOS
@@ -340,23 +333,34 @@ for i in range(len(y_picks_vals)):
 if puntos_x:
     fig.add_trace(go.Scatter(x=puntos_x, y=puntos_y, mode="markers+text", text=puntos_text, textposition="top center", textfont=dict(size=9, color="#1f77b4"), marker=dict(size=5, color="#1f77b4"), showlegend=False), row=2, col=1)
 
+# ETIQUETAS LIMPIAS (MÁXIMOS Y VALLES SIN DUPLICADOS)
 y_adelanto_vals = df_plot["Adelanto_Horas"].values
 puntos_adelanto_x, puntos_adelanto_y, puntos_adelanto_text = [], [], []
+ultimo_val_etiquetado = -9999
 
 for i in range(len(y_adelanto_vals)):
     val_ad = y_adelanto_vals[i]
+    es_extremo = (i == 0 or i == len(y_adelanto_vals) - 1)
+    
     if i == 0:
         es_maximo = val_ad >= y_adelanto_vals[1]
+        es_minimo = val_ad <= y_adelanto_vals[1]
     elif i == len(y_adelanto_vals) - 1:
         es_maximo = val_ad >= y_adelanto_vals[-2]
+        es_minimo = val_ad <= y_adelanto_vals[-2]
     else:
         es_maximo = (val_ad >= y_adelanto_vals[i - 1]) and (val_ad >= y_adelanto_vals[i + 1]) and \
                     (val_ad > y_adelanto_vals[i - 1] or val_ad > y_adelanto_vals[i + 1])
+        es_minimo = (val_ad <= y_adelanto_vals[i - 1]) and (val_ad <= y_adelanto_vals[i + 1]) and \
+                    (val_ad < y_adelanto_vals[i - 1] or val_ad < y_adelanto_vals[i + 1])
 
-    if es_maximo and (val_ad >= 4.0 or i == 0 or i == len(y_adelanto_vals) - 1):
+    debe_etiquetar = es_extremo or ((es_maximo or es_minimo) and val_ad != ultimo_val_etiquetado)
+
+    if debe_etiquetar:
         puntos_adelanto_x.append(x_vals[i])
         puntos_adelanto_y.append(val_ad)
         puntos_adelanto_text.append(f"{val_ad:.1f}h")
+        ultimo_val_etiquetado = val_ad
 
 if puntos_adelanto_x:
     fig.add_trace(go.Scatter(
@@ -412,7 +416,7 @@ st.plotly_chart(fig, use_container_width=True)
 # 7. TABLA DE FRANJAS Y DETALLE DE PREPARACIÓN
 # ==========================================
 st.subheader("📋 Detalle Horario de Preparación y Estado de Playa")
-st.markdown("Visualiza hora a hora la demanda, la producción generada, los **picks exactos**, las **horas de adelanto**, la **última tienda preparada** y las **tiendas reales** almacenadas en la playa.")
+st.markdown("Visualiza hora a hora la demanda, la producción generada, los **picks exactos**, las **horas de adelanto**, la **última tienda preparada** y las **tiendas enteras reales** almacenadas en la playa.")
 
 col_f1, col_f2 = st.columns(2)
 with col_f1:
