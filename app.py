@@ -186,7 +186,7 @@ for t in range(144):
     horas_adelanto = round(stock_actual / vel_maquina, 2) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
 
-    # Cálculo de la última tienda horaria alcanzada (Preparando Por)
+    # 1. Cálculo de la última tienda horaria alcanzada (FIFO Proyectado)
     if stock_actual > 0:
         stock_temp = stock_actual
         cursor_sim = t
@@ -203,7 +203,7 @@ for t in range(144):
     
     ultima_tienda_preparada_144.append(ultimo_texto_tienda)
 
-    # Cálculo de tiendas en playa
+    # 2. Cálculo directo y perfecto de tiendas en playa basado estrictamente en el stock actual de picks
     dem_dia_actual = demanda_servicio_por_dia[dia_actual]
     tiendas_dia_total = sum(tiendas_por_hora)
     picks_por_tienda_dia = dem_dia_actual / tiendas_dia_total if tiendas_dia_total > 0 else 1000
@@ -279,14 +279,14 @@ for dia_idx, dia in enumerate(dias_semana):
             "Eje_X": f"{dia[:3]} {horas_24[h_idx]}",
             "Dia": dia,
             "Hora": horas_24[h_idx],
-            "Demanda Picks": dem_h_dia[h_idx],
-            "Picks Hora": p_h_dia[h_idx],
+            "Demanda_Hora": dem_h_dia[h_idx],
+            "Produccion_Hora": p_h_dia[h_idx],
             "Demanda_Acum": dem_acum_dia[h_idx],
             "Prod_Acum": prod_acum_dia[h_idx],
             "Stock_Playa": stock_actual_h,
-            "Horas Adelanto": adelanto_dia[h_idx],
-            "Preparando Por": ult_tienda_dia[h_idx],
-            "Tiendas en Playa": tiendas_playa_dia[h_idx],
+            "Adelanto_Horas": adelanto_dia[h_idx],
+            "Ultima_Tienda_Hora": ult_tienda_dia[h_idx],
+            "Tiendas_En_Playa": tiendas_playa_dia[h_idx],
             "Estado": "PRODUCIENDO" if p_h_dia[h_idx] > 0 else "PARADA",
         })
 
@@ -311,11 +311,12 @@ fig = make_subplots(
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Demanda_Acum"], name="Demanda Acumulada", line=dict(color="#ff7f0e", width=2.5)), row=1, col=1)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Producción Acumulada + Stock", line=dict(color="#2ca02c", width=2.5)), row=1, col=1)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Stock_Playa"], name="Stock en Playa (Picks)", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
-fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Horas Adelanto"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), fill='tozeroy', hoverinfo="skip"), row=3, col=1)
+fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Adelanto_Horas"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), fill='tozeroy', hoverinfo="skip"), row=3, col=1)
 
 x_vals = df_plot["Eje_X"].values
 y_picks_vals = df_plot["Stock_Playa"].values
 
+# ETIQUETAS LIMPIAS PARA EL STOCK EN PLAYA
 puntos_x, puntos_y, puntos_text = [], [], []
 ultimo_y_etiquetado = -9999
 
@@ -355,7 +356,8 @@ if puntos_x:
         showlegend=False
     ), row=2, col=1)
 
-y_adelanto_vals = df_plot["Horas Adelanto"].values
+# ETIQUETAS LIMPIAS PARA HORAS DE ADELANTO
+y_adelanto_vals = df_plot["Adelanto_Horas"].values
 puntos_adelanto_x, puntos_adelanto_y, puntos_adelanto_text = [], [], []
 ultimo_val_etiquetado = -9999
 
@@ -395,6 +397,7 @@ if puntos_adelanto_x:
         showlegend=False
     ), row=3, col=1)
 
+# HITOS DE PRODUCCIÓN MODERNOS (Diseño limpio y esquinas suaves)
 for hito in hitos_produccion:
     is_fin = hito["tipo"] == "FIN"
     fig.add_annotation(
@@ -459,21 +462,10 @@ df_tabla = df_plot.copy()
 if dia_seleccionado != "Todos":
     df_tabla = df_tabla[df_tabla["Dia"] == dia_seleccionado]
 if solo_activos:
-    df_tabla = df_tabla[df_tabla["Picks Hora"] > 0]
-
-# Función de estilización para el Estado
-def estilizar_tabla(val):
-    if val == "PARADA":
-        return 'background-color: #f8d7da; color: #721c24; font-weight: bold;'
-    elif val == "PRODUCIENDO":
-        return 'background-color: #d4edda; color: #155724; font-weight: bold;'
-    return ''
-
-df_mostrar = df_tabla[["Eje_X", "Demanda Picks", "Picks Hora", "Stock_Playa", "Horas Adelanto", "Preparando Por", "Tiendas en Playa", "Estado"]]
+    df_tabla = df_tabla[df_tabla["Produccion_Hora"] > 0]
 
 st.dataframe(
-    df_mostrar.style.map(estilizar_tabla, subset=["Estado"])
-                    .set_properties(**{'text-align': 'center'}, subset=['Tiendas en Playa']),
+    df_tabla[["Eje_X", "Demanda_Hora", "Produccion_Hora", "Stock_Playa", "Adelanto_Horas", "Ultima_Tienda_Hora", "Tiendas_En_Playa", "Estado"]],
     use_container_width=True,
     hide_index=True
 )
