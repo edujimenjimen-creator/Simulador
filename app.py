@@ -126,7 +126,7 @@ for dia in dias_semana:
     demanda_h_144.extend(dem_h)
 
 # ==========================================
-# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (Con Puntero de Preparación FIFO)
+# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (Con Arrastre de Última Tienda)
 # ==========================================
 stock_actual = float(CAPACIDAD_PLAYA)  
 demanda_acumulada = 0
@@ -139,11 +139,9 @@ adelanto_horas_144 = []
 produccion_efectiva_144 = []
 ultima_tienda_preparada_144 = []
 
-# Inicializamos el puntero de la demanda que vamos cubriendo (simulando FIFO desde el inicio)
-# Al empezar con stock lleno de capacidad inicial, cubrimos desde la hora 0 en adelante
 cursor_demanda_global = 0
-
 maquina_encendida = False
+ultimo_texto_tienda = "Inicio 00:00"
 
 for t in range(144):
     dia_idx = t // 24
@@ -184,25 +182,20 @@ for t in range(144):
     horas_adelanto = round(stock_actual / vel_maquina, 2) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
 
-    # Cálculo de la hora exacta de la última tienda que se está preparando con la producción de esta hora
+    # Actualizar la última tienda preparada o mantener la anterior si la máquina no produce
     if prod_h > 0:
-        # Avanzamos el cursor de demanda según los picks producidos en esta hora
         picks_restantes_prod = prod_h
-        h_inicio_lote = cursor_demanda_global
-        
         while picks_restantes_prod > 0 and cursor_demanda_global < 144:
             dem_pendiente = demanda_h_144[cursor_demanda_global]
-            # Cuánto falta por consumir de esta hora de demanda específica
-            # (aquí simplificamos avanzando el cursor de forma acumulativa por bloques de producción)
             cursor_demanda_global += 1
             picks_restantes_prod -= dem_pendiente
             
         h_fin_lote = min(max(cursor_demanda_global - 1, 0), 143)
         d_fin = dias_semana[h_fin_lote // 24][:3]
         h_fin_Str = horas_24[h_fin_lote % 24]
-        ultima_tienda_preparada_144.append(f"{d_fin} {h_fin_Str}")
-    else:
-        ultima_tienda_preparada_144.append("Sin producción")
+        ultimo_texto_tienda = f"{d_fin} {h_fin_Str}"
+    
+    ultima_tienda_preparada_144.append(ultimo_texto_tienda)
 
 # ==========================================
 # 4. CONSTRUCCIÓN DE DATOS E HITOS
@@ -265,7 +258,6 @@ for dia_idx, dia in enumerate(dias_semana):
         t_global = (dia_idx * 24) + h_idx
         stock_actual_h = stock_playa_dia[h_idx]
         
-        # Calcular rango de demanda / tiendas que cubre este stock total (Stock en Playa)
         horas_cubiertas_count = 0
         rango_str = "Cubre demanda inmediata"
         if stock_actual_h > 0:
@@ -325,17 +317,11 @@ fig = make_subplots(
     ),
 )
 
-# Fila 1: Acumulados
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Demanda_Acum"], name="Demanda Acumulada", line=dict(color="#ff7f0e", width=2.5)), row=1, col=1)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Producción Acumulada + Stock", line=dict(color="#2ca02c", width=2.5)), row=1, col=1)
-
-# Fila 2: Stock en Playa
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Stock_Playa"], name="Stock en Playa (Picks)", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
-
-# Fila 3: Horas de Adelanto
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Adelanto_Horas"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), fill='tozeroy', hoverinfo="skip"), row=3, col=1)
 
-# Etiquetas espaciadas en Stock (Fila 2)
 x_vals = df_plot["Eje_X"].values
 y_picks_vals = df_plot["Stock_Playa"].values
 puntos_x, puntos_y, puntos_text = [], [], []
@@ -356,7 +342,6 @@ for i in range(len(y_picks_vals)):
 if puntos_x:
     fig.add_trace(go.Scatter(x=puntos_x, y=puntos_y, mode="markers+text", text=puntos_text, textposition="top center", textfont=dict(size=9, color="#1f77b4"), marker=dict(size=5, color="#1f77b4"), showlegend=False), row=2, col=1)
 
-# Horas de Adelanto (Picos principales)
 y_adelanto_vals = df_plot["Adelanto_Horas"].values
 puntos_adelanto_x, puntos_adelanto_y, puntos_adelanto_text = [], [], []
 
