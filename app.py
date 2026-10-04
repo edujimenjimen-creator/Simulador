@@ -157,22 +157,18 @@ for t in range(144):
     demanda_acumulada += dem_h
     demanda_acum_144.append(demanda_acumulada)
     
-    # 1. La demanda del cliente vacía la playa en esta hora
     stock_actual -= dem_h
     if stock_actual < 0:
         stock_actual = 0  
 
-    # 2. Lógica autónoma basada puramente en la hora de arranque programada para ese día
     if hora_del_dia == hora_inicio_permitida_dia:
         maquina_encendida = True
     elif stock_actual >= CAPACIDAD_PLAYA:
         maquina_encendida = False
 
-    # Seguridad extra si la playa se llena por completo
     if stock_actual >= CAPACIDAD_PLAYA:
         maquina_encendida = False
 
-    # 3. Producción efectiva de la hora
     prod_h = 0
     if maquina_encendida and stock_actual < CAPACIDAD_PLAYA and hora_del_dia >= hora_inicio_permitida_dia:
         espacio_libre = CAPACIDAD_PLAYA - stock_actual
@@ -285,7 +281,7 @@ fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Produ
 # Fila 2: Stock en Playa
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Stock_Playa"], name="Stock en Playa (Picks)", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
 
-# Fila 3: Horas de Adelanto (Cambiado a Azul Corporativo)
+# Fila 3: Horas de Adelanto (Azul)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Adelanto_Horas"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), fill='tozeroy', hoverinfo="skip"), row=3, col=1)
 
 # Etiquetas en los picos de Stock (Fila 2)
@@ -309,22 +305,52 @@ for i in range(len(y_picks_vals)):
 if puntos_x:
     fig.add_trace(go.Scatter(x=puntos_x, y=puntos_y, mode="markers+text", text=puntos_text, textposition="top center", textfont=dict(size=9, color="#1f77b4"), marker=dict(size=6, color="#1f77b4"), showlegend=False), row=2, col=1)
 
-# Etiquetas en los picos de Horas de Adelanto (Fila 3)
+# ==========================================
+# DETECCIÓN ROBUSTA DE PICCOS EN HORAS DE ADELANTO (Fila 3)
+# ==========================================
 y_adelanto_vals = df_plot["Adelanto_Horas"].values
 puntos_adelanto_x, puntos_adelanto_y, puntos_adelanto_text = [], [], []
 
 for i in range(len(y_adelanto_vals)):
     val_ad = y_adelanto_vals[i]
-    es_pico_ad = (0 < i < len(y_adelanto_vals) - 1) and (y_adelanto_vals[i] > y_adelanto_vals[i - 1]) and (y_adelanto_vals[i] > y_adelanto_vals[i + 1])
-    es_extremo_ad = (i == 0 or i == len(y_adelanto_vals) - 1)
+    
+    # Condición robusta de pico local (incluyendo mesetas máximas y extremos)
+    is_left_lower_or_equal = (i == 0) or (val_ad >= y_adelanto_vals[i - 1])
+    is_right_lower = (i == len(y_adelanto_vals) - 1) or (val_ad > y_adelanto_vals[i + 1])
+    
+    # Asegurar que realmente sea un punto alto respecto a su entorno inmediato general
+    es_pico_robusto = False
+    if i == 0:
+        es_pico_robusto = val_ad > y_adelanto_vals[1]
+    elif i == len(y_adelanto_vals) - 1:
+        es_pico_robusto = val_ad > y_adelanto_vals[-2]
+    else:
+        # Es pico si es mayor o igual que el anterior y estrictamente mayor que el siguiente (o viceversa),
+        # o si forma un máximo local claro.
+        if (y_adelanto_vals[i] >= y_adelanto_vals[i-1]) and (y_adelanto_vals[i] >= y_adelanto_vals[i+1]) and \
+           (y_adelanto_vals[i] > y_adelanto_vals[i-1] or y_adelanto_vals[i] > y_adelanto_vals[i+1]):
+            es_pico_robusto = True
+            
+    # Si es el primer o último punto y son máximos relativos locales visibles
+    if i == 0 and val_ad >= y_adelanto_vals[1]: es_pico_robusto = True
+    if i == len(y_adelanto_vals) - 1 and val_ad >= y_adelanto_vals[-2]: es_pico_robusto = True
 
-    if es_pico_ad or es_extremo_ad:
+    if es_pico_robusto:
         puntos_adelanto_x.append(x_vals[i])
         puntos_adelanto_y.append(val_ad)
         puntos_adelanto_text.append(f"{val_ad:.1f}h")
 
 if puntos_adelanto_x:
-    fig.add_trace(go.Scatter(x=puntos_adelanto_x, y=puntos_adelanto_y, mode="markers+text", text=puntos_adelanto_text, textposition="top center", textfont=dict(size=9, color="#0b5ed7"), marker=dict(size=5, color="#0b5ed7"), showlegend=False), row=3, col=1)
+    fig.add_trace(go.Scatter(
+        x=puntos_adelanto_x, 
+        y=puntos_adelanto_y, 
+        mode="markers+text", 
+        text=puntos_adelanto_text, 
+        textposition="top center", 
+        textfont=dict(size=9, color="#0b5ed7", family="sans-serif"), 
+        marker=dict(size=6, color="#0b5ed7"), 
+        showlegend=False
+    ), row=3, col=1)
 
 for hito in hitos_produccion:
     is_fin = hito["tipo"] == "FIN"
