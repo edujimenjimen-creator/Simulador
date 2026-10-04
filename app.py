@@ -32,8 +32,8 @@ config_guardada = cargar_configuracion()
 # ==========================================
 # 0. CONFIGURACIÓN DE PÁGINA STREAMLIT
 # ==========================================
-st.set_page_config(page_title="Planificación Semanal", layout="wide")
-st.title("🏭 OPM : Planificación semanal")
+st.set_page_config(page_title="OPM - Planificación Semanal", layout="wide")
+st.title("🏭 OPM Guadix: Planificación Autónoma con Capacidad y Arranque Diario Configurable")
 
 # ==========================================
 # 1. PARÁMETROS CONFIGURABLES (VÍA SIDEBAR)
@@ -59,10 +59,10 @@ vel_maquina = st.sidebar.number_input(
     step=500,
 )
 
-# 2. Configuración de Hora Mínima de Arranque por Día de la Semana
 dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
-horas_arranque_guardadas = config_guardada.get("horas_arranque_por_dia", {})
 
+# 2. Configuración de Hora Mínima de Arranque por Día de la Semana (Expander)
+horas_arranque_guardadas = config_guardada.get("horas_arranque_por_dia", {})
 with st.sidebar.expander("⏰ Hora de Arranque por Día"):
     horas_arranque_por_dia = {}
     for dia in dias_semana:
@@ -76,22 +76,25 @@ with st.sidebar.expander("⏰ Hora de Arranque por Día"):
             key=f"arranque_{dia}"
         )
 
-st.sidebar.subheader("📅 Demanda Diaria de Servicio (Picks)")
+# 3. Demanda Diaria de Servicio (Picks) (Convertido a Expander)
 demanda_guardada = config_guardada.get("demanda_servicio_por_dia", {
     "Lunes": 70000, "Martes": 50000, "Miércoles": 75000, 
     "Jueves": 80000, "Viernes": 89000, "Sábado": 60000
 })
 
-demanda_servicio_por_dia = {}
-for dia in dias_semana:
-    demanda_servicio_por_dia[dia] = st.sidebar.number_input(
-        dia, 
-        min_value=10000, 
-        max_value=200000, 
-        value=int(demanda_guardada.get(dia, 70000)), 
-        step=5000
-    )
+with st.sidebar.expander("📅 Demanda Diaria de Servicio (Picks)"):
+    demanda_servicio_por_dia = {}
+    for dia in dias_semana:
+        demanda_servicio_por_dia[dia] = st.number_input(
+            dia, 
+            min_value=10000, 
+            max_value=200000, 
+            value=int(demanda_guardada.get(dia, 70000)), 
+            step=5000,
+            key=f"demanda_{dia}"
+        )
 
+# 4. Perfil Horario de Tiendas (Expander)
 with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
     default_tiendas = [1, 3, 3, 3, 3, 0, 0, 0, 0, 8, 19, 9, 9, 2, 2, 0, 3, 7, 12, 4, 1, 0, 0, 0]
     tiendas_guardadas = config_guardada.get("tiendas_por_hora", default_tiendas)
