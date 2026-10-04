@@ -130,7 +130,7 @@ for dia in dias_semana:
     tiendas_h_144.extend(tiendas_por_hora)
 
 # ==========================================
-# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO
+# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (Con Cálculo Directo por Promedio de Tienda)
 # ==========================================
 stock_actual = float(CAPACIDAD_PLAYA)  
 demanda_acumulada = 0
@@ -153,7 +153,14 @@ for t in range(144):
     dia_actual = dias_semana[dia_idx]
     hora_inicio_permitida_dia = horas_arranque_por_dia[dia_actual]
 
+    # Datos diarios para calcular promedio de picks por tienda en este día
+    dem_dia_total = demanda_servicio_por_dia[dia_actual]
+    tiendas_dia_total = sum(tiendas_por_hora)
+    picks_por_tienda_dia = dem_dia_total / tiendas_dia_total if tiendas_dia_total > 0 else 1000
+
     dem_h = demanda_h_144[t]
+    tiendas_cargan_h = tiendas_h_144[t]
+
     demanda_acumulada += dem_h
     demanda_acum_144.append(demanda_acumulada)
     
@@ -186,7 +193,7 @@ for t in range(144):
     horas_adelanto = round(stock_actual / vel_maquina, 2) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
 
-    # 1. Cálculo de la última tienda horaria alcanzada
+    # 1. Cálculo de la última tienda horaria alcanzada (FIFO Proyectado)
     if stock_actual > 0:
         stock_temp = stock_actual
         cursor_sim = t
@@ -203,21 +210,10 @@ for t in range(144):
     
     ultima_tienda_preparada_144.append(ultimo_texto_tienda)
 
-    # 2. Cálculo real de tiendas enteras en la playa
-    if stock_actual > 0:
-        stock_temp_t = stock_actual
-        cursor_t = t + 1
-        tiendas_count = 0
-        while cursor_t < 144 and stock_temp_t > 0:
-            dem_f = demanda_h_144[cursor_t]
-            t_f = tiendas_h_144[cursor_t]
-            if stock_temp_t >= dem_f:
-                stock_temp_t -= dem_f
-                tiendas_count += t_f
-                cursor_t += 1
-            else:
-                break
-        tiendas_en_playa_144.append(int(tiendas_count))
+    # 2. Cálculo directo de tiendas en playa basado en Picks en Playa / Picks por Tienda del día
+    if stock_actual > 0 and picks_por_tienda_dia > 0:
+        tiendas_calculadas = round(stock_actual / picks_por_tienda_dia)
+        tiendas_en_playa_144.append(int(tiendas_calculadas))
     else:
         tiendas_en_playa_144.append(0)
 
