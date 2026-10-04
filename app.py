@@ -61,7 +61,7 @@ vel_maquina = st.sidebar.number_input(
 
 dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
-# 2. Configuración de Hora Mínima de Arranque por Día de la Semana (Expander)
+# 2. Configuración de Hora Mínima de Arranque por Día de la Semana
 horas_arranque_guardadas = config_guardada.get("horas_arranque_por_dia", {})
 with st.sidebar.expander("⏰ Hora de Arranque por Día"):
     horas_arranque_por_dia = {}
@@ -76,7 +76,7 @@ with st.sidebar.expander("⏰ Hora de Arranque por Día"):
             key=f"arranque_{dia}"
         )
 
-# 3. Demanda Diaria de Servicio (Picks) (Convertido a Expander)
+# 3. Demanda Diaria de Servicio (Picks)
 demanda_guardada = config_guardada.get("demanda_servicio_por_dia", {
     "Lunes": 70000, "Martes": 50000, "Miércoles": 75000, 
     "Jueves": 80000, "Viernes": 89000, "Sábado": 60000
@@ -94,7 +94,7 @@ with st.sidebar.expander("📅 Demanda Diaria de Servicio (Picks)"):
             key=f"demanda_{dia}"
         )
 
-# 4. Perfil Horario de Tiendas (Expander)
+# 4. Perfil Horario de Tiendas
 with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
     default_tiendas = [1, 3, 3, 3, 3, 0, 0, 0, 0, 8, 19, 9, 9, 2, 2, 0, 3, 7, 12, 4, 1, 0, 0, 0]
     tiendas_guardadas = config_guardada.get("tiendas_por_hora", default_tiendas)
@@ -263,23 +263,30 @@ for dia_idx, dia in enumerate(dias_semana):
 df_plot = pd.DataFrame(df_completo_ajustado)
 
 # ==========================================
-# 5. GRÁFICO PLOTLY
+# 5. GRÁFICO PLOTLY (3 FILAS: ACUMULADOS, STOCK, ADELANTO)
 # ==========================================
 fig = make_subplots(
-    rows=2,
+    rows=3,
     cols=1,
     shared_xaxes=True,
-    vertical_spacing=0.08,
-    row_heights=[0.65, 0.35],
+    vertical_spacing=0.06,
+    row_heights=[0.50, 0.25, 0.25],
     subplot_titles=(
         f"OPM GUADIX - Control por Hora de Arranque (Playa: {CAPACIDAD_PLAYA:,.0f} picks)",
         "Evolución del Stock Exacto en Playa (Picks)",
+        "Horas de Adelanto / Autonomía en Playa (Horas)",
     ),
 )
 
+# Fila 1: Acumulados
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Demanda_Acum"], name="Demanda Acumulada", line=dict(color="#ff7f0e", width=2.5)), row=1, col=1)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Producción Acumulada + Stock", line=dict(color="#2ca02c", width=2.5)), row=1, col=1)
+
+# Fila 2: Stock en Playa
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Stock_Playa"], name="Stock en Playa (Picks)", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
+
+# Fila 3: Horas de Adelanto
+fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Adelanto_Horas"], name="Horas de Adelanto", line=dict(color="#9467bd", width=2), fill='tozeroy', hoverinfo="skip"), row=3, col=1)
 
 x_vals = df_plot["Eje_X"].values
 y_picks_vals = df_plot["Stock_Playa"].values
@@ -328,10 +335,11 @@ for i_dia, dia in enumerate(dias_semana):
 ticks_cada_n_horas = 3
 x_ticks_vals = [df_plot["Eje_X"].iloc[i] for i in range(0, len(df_plot), ticks_cada_n_horas)]
 
-fig.update_layout(height=800, template="plotly_white", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=60, r=30, t=80, b=50))
-fig.update_xaxes(tickvals=x_ticks_vals, ticktext=x_ticks_vals, tickangle=-45, showgrid=True, row=2, col=1)
+fig.update_layout(height=950, template="plotly_white", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=60, r=30, t=80, b=50))
+fig.update_xaxes(tickvals=x_ticks_vals, ticktext=x_ticks_vals, tickangle=-45, showgrid=True, row=3, col=1)
 fig.update_yaxes(title_text="Picks Acumulados", row=1, col=1, showgrid=True)
 fig.update_yaxes(title_text="Stock en Playa (Picks)", range=[0, CAPACIDAD_PLAYA * 1.05], row=2, col=1, showgrid=True)
+fig.update_yaxes(title_text="Horas de Adelanto", row=3, col=1, showgrid=True)
 
 # ==========================================
 # 6. RENDERIZADO EN STREAMLIT
@@ -342,7 +350,7 @@ st.plotly_chart(fig, use_container_width=True)
 # 7. TABLA DE FRANJAS Y DETALLE DE PREPARACIÓN
 # ==========================================
 st.subheader("📋 Detalle Horario de Preparación y Estado de Playa")
-st.markdown("Visualiza hora a hora la demanda, la producción generada y los **picks exactos** disponibles en la playa.")
+st.markdown("Visualiza hora a hora la demanda, la producción generada, los **picks exactos** y las **horas de adelanto** disponibles en la playa.")
 
 col_f1, col_f2 = st.columns(2)
 with col_f1:
