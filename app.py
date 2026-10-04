@@ -126,7 +126,7 @@ for dia in dias_semana:
     demanda_h_144.extend(dem_h)
 
 # ==========================================
-# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (Con Arrastre de Última Tienda)
+# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (Con Puntero de Tienda Basado en Stock en Playa)
 # ==========================================
 stock_actual = float(CAPACIDAD_PLAYA)  
 demanda_acumulada = 0
@@ -139,9 +139,8 @@ adelanto_horas_144 = []
 produccion_efectiva_144 = []
 ultima_tienda_preparada_144 = []
 
-cursor_demanda_global = 0
 maquina_encendida = False
-ultimo_texto_tienda = "Inicio 00:00"
+ultimo_texto_tienda = "Lun 00:00"
 
 for t in range(144):
     dia_idx = t // 24
@@ -171,7 +170,7 @@ for t in range(144):
         prod_h = min(vel_maquina, espacio_libre)
         stock_actual += prod_h
         
-        if stock_actual >= CAPACIDAD_PLAYA:
+        if stock_actual >= CAPACIDAD_PLAYY if 'CAPACIDAD_PLAYY' in locals() else stock_actual >= CAPACIDAD_PLAYA:
             maquina_encendida = False
 
     produccion_acumulada += prod_h
@@ -182,18 +181,20 @@ for t in range(144):
     horas_adelanto = round(stock_actual / vel_maquina, 2) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
 
-    # Actualizar la última tienda preparada o mantener la anterior si la máquina no produce
-    if prod_h > 0:
-        picks_restantes_prod = prod_h
-        while picks_restantes_prod > 0 and cursor_demanda_global < 144:
-            dem_pendiente = demanda_h_144[cursor_demanda_global]
-            cursor_demanda_global += 1
-            picks_restantes_prod -= dem_pendiente
-            
-        h_fin_lote = min(max(cursor_demanda_global - 1, 0), 143)
-        d_fin = dias_semana[h_fin_lote // 24][:3]
-        h_fin_Str = horas_24[h_fin_lote % 24]
-        ultimo_texto_tienda = f"{d_fin} {h_fin_Str}"
+    # Cálculo exacto de la última tienda cubierta por el stock actual en la playa (FIFO proyectado)
+    if stock_actual > 0:
+        stock_temp = stock_actual
+        cursor_sim = t
+        while cursor_sim < 143 and stock_temp > 0:
+            cursor_sim += 1
+            dem_futura = demanda_h_144[cursor_sim]
+            if stock_temp >= dem_futura:
+                stock_temp -= dem_futura
+            else:
+                break
+        d_fin = dias_semana[cursor_sim // 24][:3]
+        h_fin_str = horas_24[cursor_sim % 24]
+        ultimo_texto_tienda = f"{d_fin} {h_fin_str}"
     
     ultima_tienda_preparada_144.append(ultimo_texto_tienda)
 
