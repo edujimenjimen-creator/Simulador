@@ -284,29 +284,27 @@ fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Stock_Playa"], name="Sto
 # Fila 3: Horas de Adelanto (Azul)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Adelanto_Horas"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), fill='tozeroy', hoverinfo="skip"), row=3, col=1)
 
-# Etiquetas en los picos de Stock (Fila 2)
+# Etiquetas exhaustivas en los picos y valles de Stock (Fila 2)
 x_vals = df_plot["Eje_X"].values
 y_picks_vals = df_plot["Stock_Playa"].values
 puntos_x, puntos_y, puntos_text = [], [], []
-ultimo_y_etiquetado = -9999
 
 for i in range(len(y_picks_vals)):
     val = y_picks_vals[i]
-    es_pico = (0 < i < len(y_picks_vals) - 1) and (y_picks_vals[i] > y_picks_vals[i - 1]) and (y_picks_vals[i] > y_picks_vals[i + 1])
-    es_valle = (0 < i < len(y_picks_vals) - 1) and (y_picks_vals[i] < y_picks_vals[i - 1]) and (y_picks_vals[i] < y_picks_vals[i + 1])
-    es_extremo_global = (i == 0 or i == len(y_picks_vals) - 1)
+    es_pico = (0 < i < len(y_picks_vals) - 1) and (y_picks_vals[i] >= y_picks_vals[i - 1]) and (y_picks_vals[i] >= y_picks_vals[i + 1]) and (y_picks_vals[i] > y_picks_vals[i - 1] or y_picks_vals[i] > y_picks_vals[i + 1])
+    es_valle = (0 < i < len(y_picks_vals) - 1) and (y_picks_vals[i] <= y_picks_vals[i - 1]) and (y_picks_vals[i] <= y_picks_vals[i + 1]) and (y_picks_vals[i] < y_picks_vals[i - 1] or y_picks_vals[i] < y_picks_vals[i + 1])
+    es_extremo = (i == 0 or i == len(y_picks_vals) - 1)
 
-    if (es_pico or es_valle or es_extremo_global) and abs(val - ultimo_y_etiquetado) >= (CAPACIDAD_PLAYA * 0.1):
+    if es_pico or es_valle or es_extremo:
         puntos_x.append(x_vals[i])
         puntos_y.append(val)
         puntos_text.append(f"{val:,.0f} p.")
-        ultimo_y_etiquetado = val
 
 if puntos_x:
-    fig.add_trace(go.Scatter(x=puntos_x, y=puntos_y, mode="markers+text", text=puntos_text, textposition="top center", textfont=dict(size=9, color="#1f77b4"), marker=dict(size=6, color="#1f77b4"), showlegend=False), row=2, col=1)
+    fig.add_trace(go.Scatter(x=puntos_x, y=puntos_y, mode="markers+text", text=puntos_text, textposition="top center", textfont=dict(size=9, color="#1f77b4"), marker=dict(size=5, color="#1f77b4"), showlegend=False), row=2, col=1)
 
 # ==========================================
-# DETECCIÓN ROBUSTA DE PICCOS EN HORAS DE ADELANTO (Fila 3)
+# DETECCIÓN 100% EXHAUSTIVA DE PICOS Y VALLES EN HORAS DE ADELANTO (Fila 3)
 # ==========================================
 y_adelanto_vals = df_plot["Adelanto_Horas"].values
 puntos_adelanto_x, puntos_adelanto_y, puntos_adelanto_text = [], [], []
@@ -314,28 +312,17 @@ puntos_adelanto_x, puntos_adelanto_y, puntos_adelanto_text = [], [], []
 for i in range(len(y_adelanto_vals)):
     val_ad = y_adelanto_vals[i]
     
-    # Condición robusta de pico local (incluyendo mesetas máximas y extremos)
-    is_left_lower_or_equal = (i == 0) or (val_ad >= y_adelanto_vals[i - 1])
-    is_right_lower = (i == len(y_adelanto_vals) - 1) or (val_ad > y_adelanto_vals[i + 1])
-    
-    # Asegurar que realmente sea un punto alto respecto a su entorno inmediato general
-    es_pico_robusto = False
+    # Comprobar si es máximo local estricto o meseta máxima
     if i == 0:
-        es_pico_robusto = val_ad > y_adelanto_vals[1]
+        es_maximo = val_ad >= y_adelanto_vals[1]
     elif i == len(y_adelanto_vals) - 1:
-        es_pico_robusto = val_ad > y_adelanto_vals[-2]
+        es_maximo = val_ad >= y_adelanto_vals[-2]
     else:
-        # Es pico si es mayor o igual que el anterior y estrictamente mayor que el siguiente (o viceversa),
-        # o si forma un máximo local claro.
-        if (y_adelanto_vals[i] >= y_adelanto_vals[i-1]) and (y_adelanto_vals[i] >= y_adelanto_vals[i+1]) and \
-           (y_adelanto_vals[i] > y_adelanto_vals[i-1] or y_adelanto_vals[i] > y_adelanto_vals[i+1]):
-            es_pico_robusto = True
-            
-    # Si es el primer o último punto y son máximos relativos locales visibles
-    if i == 0 and val_ad >= y_adelanto_vals[1]: es_pico_robusto = True
-    if i == len(y_adelanto_vals) - 1 and val_ad >= y_adelanto_vals[-2]: es_pico_robusto = True
+        # Es pico si es mayor o igual que ambos vecinos y estrictamente mayor que al menos uno
+        es_maximo = (val_ad >= y_adelanto_vals[i - 1]) and (val_ad >= y_adelanto_vals[i + 1]) and \
+                    (val_ad > y_adelanto_vals[i - 1] or val_ad > y_adelanto_vals[i + 1])
 
-    if es_pico_robusto:
+    if es_maximo:
         puntos_adelanto_x.append(x_vals[i])
         puntos_adelanto_y.append(val_ad)
         puntos_adelanto_text.append(f"{val_ad:.1f}h")
