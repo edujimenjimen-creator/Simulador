@@ -285,9 +285,10 @@ fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Produ
 # Fila 2: Stock en Playa
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Stock_Playa"], name="Stock en Playa (Picks)", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
 
-# Fila 3: Horas de Adelanto
-fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Adelanto_Horas"], name="Horas de Adelanto", line=dict(color="#9467bd", width=2), fill='tozeroy', hoverinfo="skip"), row=3, col=1)
+# Fila 3: Horas de Adelanto (Cambiado a Azul Corporativo)
+fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Adelanto_Horas"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), fill='tozeroy', hoverinfo="skip"), row=3, col=1)
 
+# Etiquetas en los picos de Stock (Fila 2)
 x_vals = df_plot["Eje_X"].values
 y_picks_vals = df_plot["Stock_Playa"].values
 puntos_x, puntos_y, puntos_text = [], [], []
@@ -307,6 +308,23 @@ for i in range(len(y_picks_vals)):
 
 if puntos_x:
     fig.add_trace(go.Scatter(x=puntos_x, y=puntos_y, mode="markers+text", text=puntos_text, textposition="top center", textfont=dict(size=9, color="#1f77b4"), marker=dict(size=6, color="#1f77b4"), showlegend=False), row=2, col=1)
+
+# Etiquetas en los picos de Horas de Adelanto (Fila 3)
+y_adelanto_vals = df_plot["Adelanto_Horas"].values
+puntos_adelanto_x, puntos_adelanto_y, puntos_adelanto_text = [], [], []
+
+for i in range(len(y_adelanto_vals)):
+    val_ad = y_adelanto_vals[i]
+    es_pico_ad = (0 < i < len(y_adelanto_vals) - 1) and (y_adelanto_vals[i] > y_adelanto_vals[i - 1]) and (y_adelanto_vals[i] > y_adelanto_vals[i + 1])
+    es_extremo_ad = (i == 0 or i == len(y_adelanto_vals) - 1)
+
+    if es_pico_ad or es_extremo_ad:
+        puntos_adelanto_x.append(x_vals[i])
+        puntos_adelanto_y.append(val_ad)
+        puntos_adelanto_text.append(f"{val_ad:.1f}h")
+
+if puntos_adelanto_x:
+    fig.add_trace(go.Scatter(x=puntos_adelanto_x, y=puntos_adelanto_y, mode="markers+text", text=puntos_adelanto_text, textposition="top center", textfont=dict(size=9, color="#0b5ed7"), marker=dict(size=5, color="#0b5ed7"), showlegend=False), row=3, col=1)
 
 for hito in hitos_produccion:
     is_fin = hito["tipo"] == "FIN"
