@@ -316,7 +316,7 @@ fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Adelanto_Horas"], name="
 x_vals = df_plot["Eje_X"].values
 y_picks_vals = df_plot["Stock_Playa"].values
 
-# ETIQUETAS LIMPIAS PARA EL STOCK EN PLAYA (MÁXIMOS Y VALLES SIN DUPLICADOS)
+# ETIQUETAS LIMPIAS PARA EL STOCK EN PLAYA
 puntos_x, puntos_y, puntos_text = [], [], []
 ultimo_y_etiquetado = -9999
 
@@ -356,7 +356,7 @@ if puntos_x:
         showlegend=False
     ), row=2, col=1)
 
-# ETIQUETAS LIMPIAS PARA HORAS DE ADELANTO (MÁXIMOS Y VALLES SIN DUPLICADOS)
+# ETIQUETAS LIMPIAS PARA HORAS DE ADELANTO
 y_adelanto_vals = df_plot["Adelanto_Horas"].values
 puntos_adelanto_x, puntos_adelanto_y, puntos_adelanto_text = [], [], []
 ultimo_val_etiquetado = -9999
@@ -397,15 +397,25 @@ if puntos_adelanto_x:
         showlegend=False
     ), row=3, col=1)
 
+# HITOS DE PRODUCCIÓN MODERNOS (Diseño limpio y esquinas suaves)
 for hito in hitos_produccion:
     is_fin = hito["tipo"] == "FIN"
     fig.add_annotation(
-        x=hito["eje_x"], y=hito["y_val"], text=hito["texto"],
-        showarrow=True, arrowhead=2, arrowsize=0.8, arrowwidth=1.2,
-        arrowcolor="#d62728" if is_fin else "#238b45",
-        ax=0, ay=-38 if is_fin else 38,
-        bgcolor="white", bordercolor="#d62728" if is_fin else "#238b45",
-        borderwidth=1, borderpad=3, font=dict(size=9, color="#d62728" if is_fin else "#1b5e20"),
+        x=hito["eje_x"], 
+        y=hito["y_val"], 
+        text=hito["texto"],
+        showarrow=True, 
+        arrowhead=2, 
+        arrowsize=0.7, 
+        arrowwidth=1.0,
+        arrowcolor="#e31a1c" if is_fin else "#33a02c",
+        ax=0, 
+        ay=-45 if is_fin else 45,
+        bgcolor="rgba(255, 255, 255, 0.92)", 
+        bordercolor="#e31a1c" if is_fin else "#33a02c",
+        borderwidth=1.2, 
+        borderpad=4, 
+        font=dict(size=9, color="#990000" if is_fin else "#1b5e20", family="sans-serif"),
         row=1, col=1
     )
 
@@ -427,7 +437,6 @@ x_ticks_vals = [df_plot["Eje_X"].iloc[i] for i in range(0, len(df_plot), ticks_c
 fig.update_layout(height=950, template="plotly_white", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=60, r=30, t=80, b=50))
 fig.update_xaxes(tickvals=x_ticks_vals, ticktext=x_ticks_vals, tickangle=-45, showgrid=True, row=3, col=1)
 fig.update_yaxes(title_text="Picks Acumulados", row=1, col=1, showgrid=True)
-# Rango adaptativo para el Stock en Playa para aprovechar mejor el espacio vertical
 min_stock_real = min(y_picks_vals) * 0.85
 fig.update_yaxes(title_text="Stock en Playa (Picks)", range=[min_stock_real, CAPACIDAD_PLAYA * 1.10], row=2, col=1, showgrid=True)
 fig.update_yaxes(title_text="Horas de Adelanto", row=3, col=1, showgrid=True)
