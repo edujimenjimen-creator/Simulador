@@ -186,7 +186,7 @@ for t in range(144):
     horas_adelanto = round(stock_actual / vel_maquina, 2) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
 
-    # 1. Cálculo de la última tienda horaria alcanzada (FIFO Proyectado)
+    # Cálculo de la última tienda horaria alcanzada (Preparando Por)
     if stock_actual > 0:
         stock_temp = stock_actual
         cursor_sim = t
@@ -203,7 +203,7 @@ for t in range(144):
     
     ultima_tienda_preparada_144.append(ultimo_texto_tienda)
 
-    # 2. Cálculo directo y perfecto de tiendas en playa basado estrictamente en el stock actual de picks
+    # Cálculo de tiendas en playa
     dem_dia_actual = demanda_servicio_por_dia[dia_actual]
     tiendas_dia_total = sum(tiendas_por_hora)
     picks_por_tienda_dia = dem_dia_actual / tiendas_dia_total if tiendas_dia_total > 0 else 1000
@@ -316,7 +316,6 @@ fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Horas Adelanto"], name="
 x_vals = df_plot["Eje_X"].values
 y_picks_vals = df_plot["Stock_Playa"].values
 
-# ETIQUETAS LIMPIAS PARA EL STOCK EN PLAYA
 puntos_x, puntos_y, puntos_text = [], [], []
 ultimo_y_etiquetado = -9999
 
@@ -356,7 +355,6 @@ if puntos_x:
         showlegend=False
     ), row=2, col=1)
 
-# ETIQUETAS LIMPIAS PARA HORAS DE ADELANTO
 y_adelanto_vals = df_plot["Horas Adelanto"].values
 puntos_adelanto_x, puntos_adelanto_y, puntos_adelanto_text = [], [], []
 ultimo_val_etiquetado = -9999
@@ -463,7 +461,7 @@ if dia_seleccionado != "Todos":
 if solo_activos:
     df_tabla = df_tabla[df_tabla["Picks Hora"] > 0]
 
-# Función de estilización para la tabla (Fondo de estado según valor y centrado de tiendas)
+# Función de estilización para el Estado
 def estilizar_tabla(val):
     if val == "PARADA":
         return 'background-color: #f8d7da; color: #721c24; font-weight: bold;'
@@ -474,7 +472,7 @@ def estilizar_tabla(val):
 df_mostrar = df_tabla[["Eje_X", "Demanda Picks", "Picks Hora", "Stock_Playa", "Horas Adelanto", "Preparando Por", "Tiendas en Playa", "Estado"]]
 
 st.dataframe(
-    df_mostrar.style.applymap(estilizar_tabla, subset=["Estado"])
+    df_mostrar.style.map(estilizar_tabla, subset=["Estado"])
                     .set_properties(**{'text-align': 'center'}, subset=['Tiendas en Playa']),
     use_container_width=True,
     hide_index=True
