@@ -61,18 +61,41 @@ vel_maquina = st.sidebar.number_input(
 dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
 horas_arranque_guardadas = config_guardada.get("horas_arranque_por_dia", {})
-with st.sidebar.expander("⏰ Hora de Arranque por Día"):
+horas_fin_guardadas = config_guardada.get("horas_fin_por_dia", {})
+
+with st.sidebar.expander("⏰ Horarios de Inicio y Fin por Día"):
     horas_arranque_por_dia = {}
+    horas_fin_por_dia = {}
+    
     for dia in dias_semana:
+        st.markdown(f"**{dia}**")
         val_arranque = horas_arranque_guardadas.get(dia, 4)
+        val_fin = horas_fin_guardadas.get(dia, 24)
+
+        # Slider para Hora de Inicio (Verde)
+        st.markdown("<span style='color: #2e7d32; font-weight: bold;'>🟢 Hora Inicio</span>", unsafe_allow_html=True)
         horas_arranque_por_dia[dia] = st.slider(
-            f"{dia}",
+            f"Inicio {dia}",
             min_value=0,
             max_value=24,
             value=int(val_arranque),
             step=1,
-            key=f"arranque_{dia}"
+            key=f"arranque_{dia}",
+            label_visibility="collapsed"
         )
+
+        # Slider para Hora de Fin (Rojo)
+        st.markdown("<span style='color: #c62828; font-weight: bold;'>🔴 Hora Fin</span>", unsafe_allow_html=True)
+        horas_fin_por_dia[dia] = st.slider(
+            f"Fin {dia}",
+            min_value=0,
+            max_value=24,
+            value=int(val_fin),
+            step=1,
+            key=f"fin_{dia}",
+            label_visibility="collapsed"
+        )
+        st.markdown("---")
 
 demanda_guardada = config_guardada.get("demanda_servicio_por_dia", {
     "Lunes": 70000, "Martes": 50000, "Miércoles": 75000, 
@@ -139,6 +162,7 @@ nueva_config = {
     "CAPACIDAD_PLAYA": CAPACIDAD_PLAYA,
     "vel_maquina": vel_maquina,
     "horas_arranque_por_dia": horas_arranque_por_dia,
+    "horas_fin_por_dia": horas_fin_por_dia,
     "demanda_servicio_por_dia": demanda_servicio_por_dia,
     "tiendas_por_hora": tiendas_por_hora,
     "stock_inicio_lunes": stock_inicio_lunes,
@@ -183,14 +207,15 @@ ultima_tienda_preparada_144 = []
 tiendas_en_playa_144 = []
 cierres_ajustados_144 = [False] * 144
 
-maquina_encendida = False
 ultimo_texto_tienda = "Lun 00:00"
 
 for t in range(144):
     dia_idx = t // 24
     hora_del_dia = t % 24
     dia_actual = dias_semana[dia_idx]
+    
     hora_inicio_permitida_dia = horas_arranque_por_dia[dia_actual]
+    hora_fin_permitida_dia = horas_fin_por_dia[dia_actual]
 
     dem_h = demanda_h_144[t]
     demanda_acumulada += dem_h
@@ -200,22 +225,14 @@ for t in range(144):
     if stock_actual < 0:
         stock_actual = 0  
 
-    # Encender la máquina si llega a la hora de arranque permitida del día
-    if hora_del_dia == hora_inicio_permitida_dia:
-        maquina_encendida = True
-
-    # Apagar la máquina únicamente si la playa alcanza o supera su capacidad máxima
-    if stock_actual >= CAPACIDAD_PLAYA:
-        maquina_encendida = False
+    # La máquina únicamente está activa dentro del rango [Inicio, Fin) configurado para cada día
+    esta_en_horario = hora_inicio_permitida_dia <= hora_del_dia < hora_fin_permitida_dia
 
     prod_h = 0
-    if maquina_encendida and stock_actual < CAPACIDAD_PLAYA:
+    if esta_en_horario and stock_actual < CAPACIDAD_PLAYA:
         espacio_libre = CAPACIDAD_PLAYA - stock_actual
         prod_h = min(vel_maquina, espacio_libre)
         stock_actual += prod_h
-        
-        if stock_actual >= CAPACIDAD_PLAYA:
-            maquina_encendida = False
 
     produccion_acumulada += prod_h
 
