@@ -72,7 +72,6 @@ with st.sidebar.expander("⏰ Horarios de Inicio y Fin por Día"):
         val_arranque = horas_arranque_guardadas.get(dia, 4)
         val_fin = horas_fin_guardadas.get(dia, 24)
 
-        # Slider para Hora de Inicio (Verde)
         st.markdown("<span style='color: #2e7d32; font-weight: bold;'>🟢 Hora Inicio</span>", unsafe_allow_html=True)
         horas_arranque_por_dia[dia] = st.slider(
             f"Inicio {dia}",
@@ -84,7 +83,6 @@ with st.sidebar.expander("⏰ Horarios de Inicio y Fin por Día"):
             label_visibility="collapsed"
         )
 
-        # Slider para Hora de Fin (Rojo)
         st.markdown("<span style='color: #c62828; font-weight: bold;'>🔴 Hora Fin</span>", unsafe_allow_html=True)
         horas_fin_por_dia[dia] = st.slider(
             f"Fin {dia}",
@@ -123,7 +121,6 @@ with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
         val = st.number_input(f"Hora {h:02d}:00", min_value=0, max_value=100, value=int(val_t), key=f"tienda_h_{h}")
         tiendas_por_hora.append(val)
 
-# Control de inicio Lunes y Cierres reales (23:00)
 with st.sidebar.expander("🛠️ Control de Stocks Reales (Inicio / Cierres)"):
     stock_inicio_lunes_guardado = config_guardada.get("stock_inicio_lunes", CAPACIDAD_PLAYA)
     stock_inicio_lunes = st.number_input(
@@ -225,7 +222,6 @@ for t in range(144):
     if stock_actual < 0:
         stock_actual = 0  
 
-    # La máquina únicamente está activa dentro del rango [Inicio, Fin) configurado para cada día
     esta_en_horario = hora_inicio_permitida_dia <= hora_del_dia < hora_fin_permitida_dia
 
     prod_h = 0
@@ -236,7 +232,6 @@ for t in range(144):
 
     produccion_acumulada += prod_h
 
-    # INYECCIÓN DE STOCK REAL A LAS 23:00 PARA CUALQUIER DÍA CONFIGURADO
     if hora_del_dia == 23 and corregir_cierres_por_dia.get(dia_actual, False):
         stock_real_objetivo = float(stocks_reales_cierre.get(dia_actual, stock_actual))
         stock_actual = stock_real_objetivo
@@ -250,7 +245,6 @@ for t in range(144):
     horas_adelanto = int(round(stock_actual / vel_maquina)) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
 
-    # 1. Cálculo de la última tienda horaria alcanzada (FIFO Proyectado)
     if stock_actual > 0:
         stock_temp = stock_actual
         cursor_sim = t
@@ -267,13 +261,15 @@ for t in range(144):
     
     ultima_tienda_preparada_144.append(ultimo_texto_tienda)
 
-    # 2. Cálculo directo de tiendas en playa
+    # Cálculo correcto y acotado según las tiendas configuradas en las franjas horarias
     dem_dia_actual = demanda_servicio_por_dia[dia_actual]
     tiendas_dia_total = sum(tiendas_por_hora)
     picks_por_tienda_dia = dem_dia_actual / tiendas_dia_total if tiendas_dia_total > 0 else 1000
     
     if stock_actual > 0 and picks_por_tienda_dia > 0:
         tiendas_en_playa = round(stock_actual / picks_por_tienda_dia)
+        # Limitado para que nunca supere el total de tiendas configuradas en tu perfil horario
+        tiendas_en_playa = min(tiendas_en_playa, tiendas_dia_total)
         tiendas_en_playa_144.append(int(tiendas_en_playa))
     else:
         tiendas_en_playa_144.append(0)
@@ -376,7 +372,7 @@ fig = make_subplots(
     vertical_spacing=0.06,
     row_heights=[0.50, 0.25, 0.25],
     subplot_titles=(
-        f"OPM GUADIX - Control por Hora de Arranque (Playa: {CAPACIDAD_PLAYA:,.0f} picks)",
+        f"OPM GUADIX - Control por Horarios (Playa: {CAPACIDAD_PLAYA:,.0f} picks)",
         "Evolución del Stock Exacto en Playa (Picks)",
         "Horas de Adelanto / Autonomía en Playa (Horas)",
     ),
