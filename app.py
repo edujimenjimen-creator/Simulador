@@ -333,43 +333,4 @@ for dia_idx, dia in enumerate(dias_semana):
         is_ajustado = ajustes_dia[h_idx]
 
         if is_ajustado:
-            hitos_ajustes_reales.append({
-                "eje_x": f"{dia[:3]} {horas_24[h_idx]}",
-                "y_stock": stock_actual_h,
-                "texto": f"CIERRE REAL: {stock_actual_h:,.0f} p."
-            })
-
-        df_completo_ajustado.append({
-            "Eje_X": f"{dia[:3]} {horas_24[h_idx]}",
-            "Dia": dia,
-            "Hora": horas_24[h_idx],
-            "Demanda_Hora": dem_h_dia[h_idx],
-            "Produccion_Hora": p_h_dia[h_idx],
-            "Demanda_Acum": dem_acum_dia[h_idx],
-            "Prod_Acum": prod_acum_dia[h_idx],
-            "Stock_Playa": stock_actual_h,
-            "Horas Adelanto": adelanto_dia[h_idx],
-            "Preparando Por": ult_tienda_dia[h_idx],
-            "Tiendas_En_Playa": tiendas_playa_dia[h_idx],
-            "Estado": "PRODUCIENDO" if p_h_dia[h_idx] > 0 else "PARADA",
-        })
-
-df_plot = pd.DataFrame(df_completo_ajustado)
-
-# ==========================================
-# 5. GRÁFICO PLOTLY (3 FILAS)
-# ==========================================
-fig = make_subplots(
-    rows=3,
-    cols=1,
-    shared_xaxes=True,
-    vertical_spacing=0.06,
-    row_heights=[0.50, 0.25, 0.25],
-    subplot_titles=(
-        f"OPM GUADIX - Control por Hora de Arranque (Playa: {CAPACIDAD_PLAYA:,.0f} picks)",
-        "Evolución del Stock Exacto en Playa (Picks)",
-        "Horas de Adelanto / Autonomía en Playa (Horas)",
-    ),
-)
-
-fig.add_trace(go.Scatter
+            hitos_ajustes
