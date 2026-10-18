@@ -137,10 +137,6 @@ guardar_configuracion(nueva_config)
 
 horas_24 = [f"{h:02d}:00" for h in range(24)]
 
-if sum(tiendas_por_hora) == 0:
-    st.error("⚠ El perfil horario de tiendas no puede sumar cero.")
-    st.stop()
-
 # Determinación dinámica de la ÚLTIMA HORA DE CARGA DEL DÍA (donde demanda > 0)
 horas_con_carga = [h for h, val in enumerate(tiendas_por_hora) if val > 0]
 ultima_hora_carga = max(horas_con_carga) if horas_con_carga else 23
@@ -150,9 +146,10 @@ ultima_hora_carga = max(horas_con_carga) if horas_con_carga else 23
 # ==========================================
 demanda_h_144 = []
 tiendas_h_144 = []
+suma_t = sum(tiendas_por_hora)
+
 for dia in dias_semana:
     dem_total = demanda_servicio_por_dia[dia]
-    suma_t = sum(tiendas_por_hora)
     factor = dem_total / suma_t if suma_t > 0 else 0
     
     dem_h = [round(t * factor) for t in tiendas_por_hora]
@@ -279,61 +276,4 @@ hitos_produccion = []
 hitos_ajustes_reales = []
 
 for dia_idx, dia in enumerate(dias_semana):
-    p_h_dia = produccion_efectiva_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    dem_h_dia = demanda_h_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    
-    dem_acum_dia = demanda_acum_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    prod_acum_dia = prod_acum_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    stock_playa_dia = stock_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    adelanto_dia = adelanto_horas_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    ult_tienda_dia = ultima_tienda_preparada_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    tiendas_playa_dia = tiendas_en_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    ajustes_dia = cierres_ajustados_144[dia_idx * 24 : (dia_idx + 1) * 24]
-
-    horas_activas = [i for i, p in enumerate(p_h_dia) if p > 0]
-    if horas_activas:
-        turnos = []
-        inicio_actual = horas_activas[0]
-        prev = horas_activas[0]
-
-        for h in horas_activas[1:]:
-            if h == prev + 1:
-                prev = h
-            else:
-                turnos.append((inicio_actual, prev))
-                inicio_actual = h
-                prev = h
-        turnos.append((inicio_actual, prev))
-
-        for h_ini, h_fin in turnos:
-            stock_ini_val = stock_playa_dia[h_ini]
-            hitos_produccion.append({
-                "tipo": "INICIO",
-                "eje_x": f"{dia[:3]} {horas_24[h_ini]}",
-                "y_val": prod_acum_dia[h_ini],
-                "texto": f"INICIO {horas_24[h_ini]}<br>({stock_ini_val:,.0f} p.)",
-            })
-            if h_fin == 23:
-                etiqueta_fin = "24:00"
-                eje_x_fin = f"{dia[:3]} 23:00"
-                y_val_fin = prod_acum_dia[23]
-                stock_fin_val = stock_playa_dia[23]
-            else:
-                etiqueta_fin = horas_24[h_fin + 1]
-                eje_x_fin = f"{dia[:3]} {horas_24[h_fin + 1]}"
-                y_val_fin = prod_acum_dia[h_fin + 1]
-                stock_fin_val = stock_playa_dia[h_fin + 1]
-
-            hitos_produccion.append({
-                "tipo": "FIN",
-                "eje_x": eje_x_fin,
-                "y_val": y_val_fin,
-                "texto": f"FIN {etiqueta_fin}<br>({stock_fin_val:,.0f} p.)",
-            })
-
-    for h_idx in range(24):
-        stock_actual_h = stock_playa_dia[h_idx]
-        is_ajustado = ajustes_dia[h_idx]
-
-        if is_ajustado:
-            hitos_ajustes
+    p
