@@ -100,7 +100,7 @@ with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
         val = st.number_input(f"Hora {h:02d}:00", min_value=0, max_value=100, value=int(val_t), key=f"tienda_h_{h}")
         tiendas_por_hora.append(val)
 
-# Control de incidencias reales para CADA DÍA (Cierre de día)
+# Control de incidencias reales para CADA DÍA (Cierre a las 23:00) - Sin límite estricto de capacidad
 with st.sidebar.expander("🛠️ Control de Cierres Reales (23:00 por Día)"):
     corregir_cierres_guardado = config_guardada.get("corregir_cierres", {})
     stocks_reales_guardados = config_guardada.get("stocks_reales_cierre", {})
@@ -117,7 +117,7 @@ with st.sidebar.expander("🛠️ Control de Cierres Reales (23:00 por Día)"):
         stocks_reales_cierre[dia] = st.number_input(
             f"Stock real 23:00 ({dia})",
             min_value=0,
-            max_value=200000,
+            max_value=200000,  # Ampliado para permitir valores superiores a la capacidad de la playa
             value=int(stock_val),
             step=1000,
             key=f"num_stock_cierre_{dia}"
@@ -137,19 +137,18 @@ guardar_configuracion(nueva_config)
 
 horas_24 = [f"{h:02d}:00" for h in range(24)]
 
-# Determinación dinámica de la ÚLTIMA HORA DE CARGA DEL DÍA (donde demanda > 0)
-horas_con_carga = [h for h, val in enumerate(tiendas_por_hora) if val > 0]
-ultima_hora_carga = max(horas_con_carga) if horas_con_carga else 23
+if sum(tiendas_por_hora) == 0:
+    st.error("⚠ El perfil horario de tiendas no puede sumar cero.")
+    st.stop()
 
 # ==========================================
 # 2. PREPARACIÓN DE DEMANDA Y TIENDAS HORA A HORA (144h)
 # ==========================================
 demanda_h_144 = []
 tiendas_h_144 = []
-suma_t = sum(tiendas_por_hora)
-
 for dia in dias_semana:
     dem_total = demanda_servicio_por_dia[dia]
+    suma_t = sum(tiendas_por_hora)
     factor = dem_total / suma_t if suma_t > 0 else 0
     
     dem_h = [round(t * factor) for t in tiendas_por_hora]
@@ -181,13 +180,6 @@ for t in range(144):
     dia_actual = dias_semana[dia_idx]
     hora_inicio_permitida_dia = horas_arranque_por_dia[dia_actual]
 
-    # Demanda total del DÍA SIGUIENTE
-    if dia_idx + 1 < len(dias_semana):
-        dia_siguiente = dias_semana[dia_idx + 1]
-        demanda_dia_siguiente = demanda_servicio_por_dia[dia_siguiente]
-    else:
-        demanda_dia_siguiente = demanda_servicio_por_dia[dia_actual]
-
     dem_h = demanda_h_144[t]
     demanda_acumulada += dem_h
     demanda_acum_144.append(demanda_acumulada)
@@ -196,31 +188,21 @@ for t in range(144):
     if stock_actual < 0:
         stock_actual = 0  
 
-    # A partir de la última hora de carga del día, el stock es íntegramente para el día siguiente
-    es_post_ultima_carga = hora_del_dia >= ultima_hora_carga
-
     if hora_del_dia == hora_inicio_permitida_dia:
-        if stock_actual < CAPACIDAD_PLAYA and not (es_post_ultima_carga and stock_actual >= demanda_dia_siguiente):
-            maquina_encendida = True
-        else:
-            maquina_encendida = False
-    elif stock_actual >= CAPACIDAD_PLAYA or (es_post_ultima_carga and stock_actual >= demanda_dia_siguiente):
+        maquina_encendida = True
+    elif stock_actual >= CAPACIDAD_PLAYA:
+        maquina_encendida = False
+
+    if stock_actual >= CAPACIDAD_PLAYA:
         maquina_encendida = False
 
     prod_h = 0
     if maquina_encendida and stock_actual < CAPACIDAD_PLAYA and hora_del_dia >= hora_inicio_permitida_dia:
         espacio_libre = CAPACIDAD_PLAYA - stock_actual
-        
-        if es_post_ultima_carga:
-            margen_dia_siguiente = demanda_dia_siguiente - stock_actual
-            limite_produccion = max(0.0, min(espacio_libre, margen_dia_siguiente))
-        else:
-            limite_produccion = espacio_libre
-            
-        prod_h = min(vel_maquina, limite_produccion)
+        prod_h = min(vel_maquina, espacio_libre)
         stock_actual += prod_h
         
-        if stock_actual >= CAPACIDAD_PLAYA or (es_post_ultima_carga and stock_actual >= demanda_dia_siguiente):
+        if stock_actual >= CAPACIDAD_PLAYA:
             maquina_encendida = False
 
     produccion_acumulada += prod_h
@@ -257,7 +239,7 @@ for t in range(144):
     
     ultima_tienda_preparada_144.append(ultimo_texto_tienda)
 
-    # 2. Cálculo directo de tiendas en playa basado en el stock actual de picks
+    # 2. Cálculo directo y perfecto de tiendas en playa basado estrictamente en el stock actual de picks
     dem_dia_actual = demanda_servicio_por_dia[dia_actual]
     tiendas_dia_total = sum(tiendas_por_hora)
     picks_por_tienda_dia = dem_dia_actual / tiendas_dia_total if tiendas_dia_total > 0 else 1000
@@ -333,4 +315,225 @@ for dia_idx, dia in enumerate(dias_semana):
         is_ajustado = ajustes_dia[h_idx]
 
         if is_ajustado:
-            hitos_ajustes
+            hitos_ajustes_reales.append({
+                "eje_x": f"{dia[:3]} {horas_24[h_idx]}",
+                "y_stock": stock_actual_h,
+                "texto": f"CIERRE REAL: {stock_actual_h:,.0f} p."
+            })
+
+        df_completo_ajustado.append({
+            "Eje_X": f"{dia[:3]} {horas_24[h_idx]}",
+            "Dia": dia,
+            "Hora": horas_24[h_idx],
+            "Demanda_Hora": dem_h_dia[h_idx],
+            "Produccion_Hora": p_h_dia[h_idx],
+            "Demanda_Acum": dem_acum_dia[h_idx],
+            "Prod_Acum": prod_acum_dia[h_idx],
+            "Stock_Playa": stock_actual_h,
+            "Horas Adelanto": adelanto_dia[h_idx],
+            "Preparando Por": ult_tienda_dia[h_idx],
+            "Tiendas_En_Playa": tiendas_playa_dia[h_idx],
+            "Estado": "PRODUCIENDO" if p_h_dia[h_idx] > 0 else "PARADA",
+        })
+
+df_plot = pd.DataFrame(df_completo_ajustado)
+
+# ==========================================
+# 5. GRÁFICO PLOTLY (3 FILAS)
+# ==========================================
+fig = make_subplots(
+    rows=3,
+    cols=1,
+    shared_xaxes=True,
+    vertical_spacing=0.06,
+    row_heights=[0.50, 0.25, 0.25],
+    subplot_titles=(
+        f"OPM GUADIX - Control por Hora de Arranque (Playa: {CAPACIDAD_PLAYA:,.0f} picks)",
+        "Evolución del Stock Exacto en Playa (Picks)",
+        "Horas de Adelanto / Autonomía en Playa (Horas)",
+    ),
+)
+
+fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Demanda_Acum"], name="Demanda Acumulada", line=dict(color="#ff7f0e", width=2.5)), row=1, col=1)
+fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Producción Acumulada + Stock", line=dict(color="#2ca02c", width=2.5)), row=1, col=1)
+fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Stock_Playa"], name="Stock en Playa (Picks)", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
+fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Horas Adelanto"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), fill='tozeroy', hoverinfo="skip"), row=3, col=1)
+
+x_vals = df_plot["Eje_X"].values
+y_picks_vals = df_plot["Stock_Playa"].values
+
+# ETIQUETAS LIMPIAS PARA EL STOCK EN PLAYA
+puntos_x, puntos_y, puntos_text = [], [], []
+ultimo_y_etiquetado = -9999
+
+for i in range(len(y_picks_vals)):
+    val = y_picks_vals[i]
+    es_extremo = (i == 0 or i == len(y_picks_vals) - 1)
+    
+    if i == 0:
+        es_pico = val >= y_picks_vals[1]
+        es_valle = val <= y_picks_vals[1]
+    elif i == len(y_picks_vals) - 1:
+        es_pico = val >= y_picks_vals[-2]
+        es_valle = val <= y_picks_vals[-2]
+    else:
+        es_pico = (val >= y_picks_vals[i - 1]) and (val >= y_picks_vals[i + 1]) and \
+                  (val > y_picks_vals[i - 1] or val > y_picks_vals[i + 1])
+        es_valle = (val <= y_picks_vals[i - 1]) and (val <= y_picks_vals[i + 1]) and \
+                   (val < y_picks_vals[i - 1] or val < y_picks_vals[i + 1])
+
+    debe_etiquetar = es_extremo or ((es_pico or es_valle) and abs(val - ultimo_y_etiquetado) >= (CAPACIDAD_PLAYA * 0.08))
+
+    if debe_etiquetar:
+        puntos_x.append(x_vals[i])
+        puntos_y.append(val)
+        puntos_text.append(f"{val:,.0f} p.")
+        ultimo_y_etiquetado = val
+
+if puntos_x:
+    fig.add_trace(go.Scatter(
+        x=puntos_x, 
+        y=puntos_y, 
+        mode="markers+text", 
+        text=puntos_text, 
+        textposition="top center", 
+        textfont=dict(size=9, color="#1f77b4"), 
+        marker=dict(size=5, color="#1f77b4"), 
+        showlegend=False
+    ), row=2, col=1)
+
+# ETIQUETAS LIMPIAS PARA HORAS DE ADELANTO (SIN DECIMALES)
+y_adelanto_vals = df_plot["Horas Adelanto"].values
+puntos_adelanto_x, puntos_adelanto_y, puntos_adelanto_text = [], [], []
+ultimo_val_etiquetado = -9999
+
+for i in range(len(y_adelanto_vals)):
+    val_ad = y_adelanto_vals[i]
+    es_extremo = (i == 0 or i == len(y_adelanto_vals) - 1)
+    
+    if i == 0:
+        es_maximo = val_ad >= y_adelanto_vals[1]
+        es_minimo = val_ad <= y_adelanto_vals[1]
+    elif i == len(y_adelanto_vals) - 1:
+        es_maximo = val_ad >= y_adelanto_vals[-2]
+        es_minimo = val_ad <= y_adelanto_vals[-2]
+    else:
+        es_maximo = (val_ad >= y_adelanto_vals[i - 1]) and (val_ad >= y_adelanto_vals[i + 1]) and \
+                    (val_ad > y_adelanto_vals[i - 1] or val_ad > y_adelanto_vals[i + 1])
+        es_minimo = (val_ad <= y_adelanto_vals[i - 1]) and (val_ad <= y_adelanto_vals[i + 1]) and \
+                    (val_ad < y_adelanto_vals[i - 1] or val_ad < y_adelanto_vals[i + 1])
+
+    debe_etiquetar = es_extremo or ((es_maximo or es_minimo) and val_ad != ultimo_val_etiquetado)
+
+    if debe_etiquetar:
+        puntos_adelanto_x.append(x_vals[i])
+        puntos_adelanto_y.append(val_ad)
+        puntos_adelanto_text.append(f"{val_ad:.0f}h")  
+        ultimo_val_etiquetado = val_ad
+
+if puntos_adelanto_x:
+    fig.add_trace(go.Scatter(
+        x=puntos_adelanto_x, 
+        y=puntos_adelanto_y, 
+        mode="markers+text", 
+        text=puntos_adelanto_text, 
+        textposition="top center", 
+        textfont=dict(size=9, color="#0b5ed7", family="sans-serif"), 
+        marker=dict(size=6, color="#0b5ed7"), 
+        showlegend=False
+    ), row=3, col=1)
+
+# HITOS DE PRODUCCIÓN
+for hito in hitos_produccion:
+    is_fin = hito["tipo"] == "FIN"
+    fig.add_annotation(
+        x=hito["eje_x"], 
+        y=hito["y_val"], 
+        text=hito["texto"],
+        showarrow=True, 
+        arrowhead=2, 
+        arrowsize=0.7, 
+        arrowwidth=1.0,
+        arrowcolor="#e31a1c" if is_fin else "#33a02c",
+        ax=0, 
+        ay=-45 if is_fin else 45,
+        bgcolor="rgba(255, 255, 255, 0.92)", 
+        bordercolor="#e31a1c" if is_fin else "#33a02c",
+        borderwidth=1.2, 
+        borderpad=4, 
+        font=dict(size=9, color="#990000" if is_fin else "#1b5e20", family="sans-serif"),
+        row=1, col=1
+    )
+
+# ANOTACIONES VISUALES PARA CIERRES REALES AJUSTADOS (EN GRÁFICO DE STOCK)
+for ajuste in hitos_ajustes_reales:
+    fig.add_annotation(
+        x=ajuste["eje_x"],
+        y=ajuste["y_stock"],
+        text=ajuste["texto"],
+        showarrow=True,
+        arrowhead=2,
+        arrowsize=0.7,
+        arrowwidth=1.2,
+        arrowcolor="#ff7f0e",
+        ax=0,
+        ay=-35,
+        bgcolor="rgba(255, 243, 205, 0.95)",
+        bordercolor="#ff7f0e",
+        borderwidth=1.2,
+        borderpad=4,
+        font=dict(size=9, color="#856404", family="sans-serif"),
+        row=2, col=1
+    )
+
+max_y_picks = max(df_plot["Demanda_Acum"].max(), df_plot["Prod_Acum"].max())
+for i_dia, dia in enumerate(dias_semana):
+    idx_medio_dia = i_dia * 24 + 12
+    fig.add_annotation(
+        x=df_plot["Eje_X"].iloc[idx_medio_dia], y=max_y_picks * 0.94, text=f"<b>{dia.upper()}</b>",
+        showarrow=False, font=dict(size=11, color="#444444"),
+        bgcolor="rgba(255, 255, 255, 0.85)", bordercolor="rgba(150, 150, 150, 0.4)", borderwidth=1, borderpad=4,
+        row=1, col=1
+    )
+    if i_dia > 0:
+        fig.add_vline(x=df_plot["Eje_X"].iloc[i_dia * 24], line_dash="solid", line_color="rgba(100, 100, 100, 0.3)", line_width=1.2)
+
+ticks_cada_n_horas = 3
+x_ticks_vals = [df_plot["Eje_X"].iloc[i] for i in range(0, len(df_plot), ticks_cada_n_horas)]
+
+fig.update_layout(height=950, template="plotly_white", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=60, r=30, t=80, b=50))
+fig.update_xaxes(tickvals=x_ticks_vals, ticktext=x_ticks_vals, tickangle=-45, showgrid=True, row=3, col=1)
+fig.update_yaxes(title_text="Picks Acumulados", row=1, col=1, showgrid=True)
+min_stock_real = min(y_picks_vals) * 0.85
+max_stock_grafico = max(max(y_picks_vals), CAPACIDAD_PLAYA) * 1.15
+fig.update_yaxes(title_text="Stock en Playa (Picks)", range=[min_stock_real, max_stock_grafico], row=2, col=1, showgrid=True)
+fig.update_yaxes(title_text="Horas de Adelanto", row=3, col=1, showgrid=True)
+
+# ==========================================
+# 6. RENDERIZADO EN STREAMLIT
+# ==========================================
+st.plotly_chart(fig, use_container_width=True)
+
+# ==========================================
+# 7. TABLA DE FRANJAS Y DETALLE DE PREPARACIÓN
+# ==========================================
+st.subheader("📋 Detalle Horario de Preparación y Estado de Playa")
+st.markdown("Visualiza hora a hora la demanda, la producción generada, los **picks exactos**, las **horas de adelanto**, la **última tienda preparada** y las **tiendas enteras reales** almacenadas en la playa.")
+
+col_f1, col_f2 = st.columns(2)
+with col_f1:
+    dia_seleccionado = st.selectbox("Filtrar por Día:", ["Todos"] + dias_semana)
+with col_f2:
+    solo_activos = st.checkbox("Mostrar solo horas con producción activa", value=False)
+
+df_tabla = df_plot.copy()
+if dia_seleccionado != "Todos":
+    df_tabla = df_tabla[df_tabla["Dia"] == dia_seleccionado]
+if solo_activos:
+    df_tabla = df_tabla[df_tabla["Produccion_Hora"] > 0]
+
+st.dataframe(
+    df_tabla[["Eje_X", "Demanda_Hora", "Produccion_Hora", "Stock_Playa", "Horas Adelanto", "Preparando Por", "Tiendas_En_Playa", "Estado"]],
+    use_container_width=True,
+    hide_index=True
+)
