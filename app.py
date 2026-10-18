@@ -286,7 +286,6 @@ for dia_idx, dia in enumerate(dias_semana):
 
         for h_ini, h_fin in turnos:
             stock_ini_val = stock_playa_dia[h_ini]
-            # Hitos dirigidos a la curva de stock en playa (Fila 1)
             hitos_produccion.append({
                 "tipo": "INICIO",
                 "eje_x": f"{dia[:3]} {horas_24[h_ini]}",
@@ -338,7 +337,7 @@ for dia_idx, dia in enumerate(dias_semana):
 df_plot = pd.DataFrame(df_completo_ajustado)
 
 # ==========================================
-# 5. GRÁFICO PLOTLY (2 FILAS: STOCK Y ADELANTO)
+# 5. GRÁFICO PLOTLY (2 FILAS CON DEMANDA HORARIA Y STOCK)
 # ==========================================
 fig = make_subplots(
     rows=2,
@@ -347,14 +346,38 @@ fig = make_subplots(
     vertical_spacing=0.08,
     row_heights=[0.70, 0.30],
     subplot_titles=(
-        f"Evolución del Stock Físico en Playa (Picks) - Capacidad Máx: {CAPACIDAD_PLAYA:,.0f}",
+        f"Evolución del Stock en Playa (Picks) y Demanda por Hora - Capacidad Máx: {CAPACIDAD_PLAYA:,.0f}",
         "Horas de Adelanto / Autonomía en Playa (Horas)",
     ),
 )
 
-# Trazas principales
-fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Stock_Playa"], name="Stock en Playa (Picks)", line=dict(color="#1f77b4", width=2.5), hoverinfo="skip"), row=1, col=1)
-fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Horas Adelanto"], name="Horas de Adelanto", line=dict(color="#0b5ed7", width=2), fill='tozeroy', hoverinfo="skip"), row=2, col=1)
+# Demanda Horaria (Barras en la Fila 1)
+fig.add_trace(go.Bar(
+    x=df_plot["Eje_X"], 
+    y=df_plot["Demanda_Hora"], 
+    name="Demanda por Hora (Picks)", 
+    marker_color="rgba(255, 127, 14, 0.4)",
+    hoverinfo="x+y"
+), row=1, col=1)
+
+# Stock en Playa (Línea principal en Fila 1)
+fig.add_trace(go.Scatter(
+    x=df_plot["Eje_X"], 
+    y=df_plot["Stock_Playa"], 
+    name="Stock en Playa (Picks)", 
+    line=dict(color="#1f77b4", width=2.5), 
+    hoverinfo="skip"
+), row=1, col=1)
+
+# Horas de Adelanto (Fila 2)
+fig.add_trace(go.Scatter(
+    x=df_plot["Eje_X"], 
+    y=df_plot["Horas Adelanto"], 
+    name="Horas de Adelanto", 
+    line=dict(color="#0b5ed7", width=2), 
+    fill='tozeroy', 
+    hoverinfo="skip"
+), row=2, col=1)
 
 x_vals = df_plot["Eje_X"].values
 y_picks_vals = df_plot["Stock_Playa"].values
@@ -440,7 +463,7 @@ if puntos_adelanto_x:
         showlegend=False
     ), row=2, col=1)
 
-# HITOS DE PRODUCCIÓN (APUNTANDO DIRECTAMENTE A LA CURVA DE STOCK - FILA 1)
+# HITOS DE PRODUCCIÓN (APUNTANDO A LA CURVA DE STOCK - FILA 1)
 for hito in hitos_produccion:
     is_fin = hito["tipo"] == "FIN"
     fig.add_annotation(
@@ -503,7 +526,7 @@ fig.update_xaxes(tickvals=x_ticks_vals, ticktext=x_ticks_vals, tickangle=-45, sh
 
 min_stock_real = min(y_picks_vals) * 0.85
 max_stock_grafico = max(max(y_picks_vals), CAPACIDAD_PLAYA) * 1.15
-fig.update_yaxes(title_text="Stock en Playa (Picks)", range=[min_stock_real, max_stock_grafico], row=1, col=1, showgrid=True)
+fig.update_yaxes(title_text="Picks (Stock y Demanda/h)", range=[min_stock_real, max_stock_grafico], row=1, col=1, showgrid=True)
 fig.update_yaxes(title_text="Horas de Adelanto", row=2, col=1, showgrid=True)
 
 # ==========================================
