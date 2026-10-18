@@ -60,25 +60,19 @@ vel_maquina = st.sidebar.number_input(
 
 dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
-# Selección de Hora de Arranque de 00:00 a 24:00 por cada día
-opciones_horas = [f"{h:02d}:00" for h in range(25)]
-
 horas_arranque_guardadas = config_guardada.get("horas_arranque_por_dia", {})
-with st.sidebar.expander("⏰ Hora de Arranque por Día (00:00 - 24:00)"):
+with st.sidebar.expander("⏰ Hora de Arranque por Día"):
     horas_arranque_por_dia = {}
     for dia in dias_semana:
-        val_arranque_int = horas_arranque_guardadas.get(dia, 4)
-        val_arranque_str = f"{val_arranque_int:02d}:00"
-        if val_arranque_str not in opciones_horas:
-            val_arranque_str = "04:00"
-
-        hora_sel_str = st.selectbox(
+        val_arranque = horas_arranque_guardadas.get(dia, 4)
+        horas_arranque_por_dia[dia] = st.slider(
             f"{dia}",
-            options=opciones_horas,
-            index=opciones_horas.index(val_arranque_str),
+            min_value=0,
+            max_value=24,
+            value=int(val_arranque),
+            step=1,
             key=f"arranque_{dia}"
         )
-        horas_arranque_por_dia[dia] = int(hora_sel_str.split(":")[0])
 
 demanda_guardada = config_guardada.get("demanda_servicio_por_dia", {
     "Lunes": 70000, "Martes": 50000, "Miércoles": 75000, 
