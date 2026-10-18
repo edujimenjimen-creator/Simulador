@@ -157,4 +157,183 @@ for dia in dias_semana:
     
     dem_h = [round(t * factor) for t in tiendas_por_hora]
     demanda_h_144.extend(dem_h)
-    tiendas_h_144.extend(
+    tiendas_h_144.extend(tiendas_por_hora)
+
+# ==========================================
+# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO
+# ==========================================
+stock_actual = float(CAPACIDAD_PLAYA)  
+demanda_acumulada = 0
+produccion_acumulada = float(CAPACIDAD_PLAYA)
+
+demanda_acum_144 = []
+prod_acum_144 = []
+stock_playa_144 = []
+adelanto_horas_144 = []
+produccion_efectiva_144 = []
+ultima_tienda_preparada_144 = []
+tiendas_en_playa_144 = []
+cierres_ajustados_144 = [False] * 144
+
+maquina_encendida = False
+ultimo_texto_tienda = "Lun 00:00"
+
+for t in range(144):
+    dia_idx = t // 24
+    hora_del_dia = t % 24
+    dia_actual = dias_semana[dia_idx]
+    hora_inicio_permitida_dia = horas_arranque_por_dia[dia_actual]
+
+    # Demanda total del DÍA SIGUIENTE
+    if dia_idx + 1 < len(dias_semana):
+        dia_siguiente = dias_semana[dia_idx + 1]
+        demanda_dia_siguiente = demanda_servicio_por_dia[dia_siguiente]
+    else:
+        demanda_dia_siguiente = demanda_servicio_por_dia[dia_actual]
+
+    dem_h = demanda_h_144[t]
+    demanda_acumulada += dem_h
+    demanda_acum_144.append(demanda_acumulada)
+    
+    stock_actual -= dem_h
+    if stock_actual < 0:
+        stock_actual = 0  
+
+    # A partir de la última hora de carga del día, el stock es íntegramente para el día siguiente
+    es_post_ultima_carga = hora_del_dia >= ultima_hora_carga
+
+    if hora_del_dia == hora_inicio_permitida_dia:
+        if stock_actual < CAPACIDAD_PLAYA and not (es_post_ultima_carga and stock_actual >= demanda_dia_siguiente):
+            maquina_encendida = True
+        else:
+            maquina_encendida = False
+    elif stock_actual >= CAPACIDAD_PLAYA or (es_post_ultima_carga and stock_actual >= demanda_dia_siguiente):
+        maquina_encendida = False
+
+    prod_h = 0
+    if maquina_encendida and stock_actual < CAPACIDAD_PLAYA and hora_del_dia >= hora_inicio_permitida_dia:
+        espacio_libre = CAPACIDAD_PLAYA - stock_actual
+        
+        if es_post_ultima_carga:
+            margen_dia_siguiente = demanda_dia_siguiente - stock_actual
+            limite_produccion = max(0.0, min(espacio_libre, margen_dia_siguiente))
+        else:
+            limite_produccion = espacio_libre
+            
+        prod_h = min(vel_maquina, limite_produccion)
+        stock_actual += prod_h
+        
+        if stock_actual >= CAPACIDAD_PLAYA or (es_post_ultima_carga and stock_actual >= demanda_dia_siguiente):
+            maquina_encendida = False
+
+    produccion_acumulada += prod_h
+
+    # INYECCIÓN DE STOCK REAL A LAS 23:00 PARA CUALQUIER DÍA CONFIGURADO
+    if hora_del_dia == 23 and corregir_cierres_por_dia.get(dia_actual, False):
+        stock_real_objetivo = float(stocks_reales_cierre.get(dia_actual, stock_actual))
+        stock_actual = stock_real_objetivo
+        produccion_acumulada = stock_actual + demanda_acumulada
+        cierres_ajustados_144[t] = True
+
+    prod_acum_144.append(produccion_acumulada)
+    produccion_efectiva_144.append(prod_h)
+    stock_playa_144.append(stock_actual)
+    
+    # Redondeo sin decimales para las horas de adelanto
+    horas_adelanto = int(round(stock_actual / vel_maquina)) if vel_maquina > 0 else 0
+    adelanto_horas_144.append(horas_adelanto)
+
+    # 1. Cálculo de la última tienda horaria alcanzada (FIFO Proyectado)
+    if stock_actual > 0:
+        stock_temp = stock_actual
+        cursor_sim = t
+        while cursor_sim < 143 and stock_temp > 0:
+            cursor_sim += 1
+            dem_futura = demanda_h_144[cursor_sim]
+            if stock_temp >= dem_futura:
+                stock_temp -= dem_futura
+            else:
+                break
+        d_fin = dias_semana[cursor_sim // 24][:3]
+        h_fin_str = horas_24[cursor_sim % 24]
+        ultimo_texto_tienda = f"{d_fin} {h_fin_str}"
+    
+    ultima_tienda_preparada_144.append(ultimo_texto_tienda)
+
+    # 2. Cálculo directo de tiendas en playa basado en el stock actual de picks
+    dem_dia_actual = demanda_servicio_por_dia[dia_actual]
+    tiendas_dia_total = sum(tiendas_por_hora)
+    picks_por_tienda_dia = dem_dia_actual / tiendas_dia_total if tiendas_dia_total > 0 else 1000
+    
+    if stock_actual > 0 and picks_por_tienda_dia > 0:
+        tiendas_en_playa = round(stock_actual / picks_por_tienda_dia)
+        tiendas_en_playa_144.append(int(tiendas_en_playa))
+    else:
+        tiendas_en_playa_144.append(0)
+
+# ==========================================
+# 4. CONSTRUCCIÓN DE DATOS E HITOS
+# ==========================================
+df_completo_ajustado = []
+hitos_produccion = []
+hitos_ajustes_reales = []
+
+for dia_idx, dia in enumerate(dias_semana):
+    p_h_dia = produccion_efectiva_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    dem_h_dia = demanda_h_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    
+    dem_acum_dia = demanda_acum_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    prod_acum_dia = prod_acum_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    stock_playa_dia = stock_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    adelanto_dia = adelanto_horas_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    ult_tienda_dia = ultima_tienda_preparada_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    tiendas_playa_dia = tiendas_en_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    ajustes_dia = cierres_ajustados_144[dia_idx * 24 : (dia_idx + 1) * 24]
+
+    horas_activas = [i for i, p in enumerate(p_h_dia) if p > 0]
+    if horas_activas:
+        turnos = []
+        inicio_actual = horas_activas[0]
+        prev = horas_activas[0]
+
+        for h in horas_activas[1:]:
+            if h == prev + 1:
+                prev = h
+            else:
+                turnos.append((inicio_actual, prev))
+                inicio_actual = h
+                prev = h
+        turnos.append((inicio_actual, prev))
+
+        for h_ini, h_fin in turnos:
+            stock_ini_val = stock_playa_dia[h_ini]
+            hitos_produccion.append({
+                "tipo": "INICIO",
+                "eje_x": f"{dia[:3]} {horas_24[h_ini]}",
+                "y_val": prod_acum_dia[h_ini],
+                "texto": f"INICIO {horas_24[h_ini]}<br>({stock_ini_val:,.0f} p.)",
+            })
+            if h_fin == 23:
+                etiqueta_fin = "24:00"
+                eje_x_fin = f"{dia[:3]} 23:00"
+                y_val_fin = prod_acum_dia[23]
+                stock_fin_val = stock_playa_dia[23]
+            else:
+                etiqueta_fin = horas_24[h_fin + 1]
+                eje_x_fin = f"{dia[:3]} {horas_24[h_fin + 1]}"
+                y_val_fin = prod_acum_dia[h_fin + 1]
+                stock_fin_val = stock_playa_dia[h_fin + 1]
+
+            hitos_produccion.append({
+                "tipo": "FIN",
+                "eje_x": eje_x_fin,
+                "y_val": y_val_fin,
+                "texto": f"FIN {etiqueta_fin}<br>({stock_fin_val:,.0f} p.)",
+            })
+
+    for h_idx in range(24):
+        stock_actual_h = stock_playa_dia[h_idx]
+        is_ajustado = ajustes_dia[h_idx]
+
+        if is_ajustado:
+            hitos_ajustes
