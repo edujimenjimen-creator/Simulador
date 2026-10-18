@@ -200,16 +200,16 @@ for t in range(144):
     if stock_actual < 0:
         stock_actual = 0  
 
+    # Encender la máquina si llega a la hora de arranque permitida del día
     if hora_del_dia == hora_inicio_permitida_dia:
         maquina_encendida = True
-    elif stock_actual >= CAPACIDAD_PLAYA:
-        maquina_encendida = False
 
+    # Apagar la máquina únicamente si la playa alcanza o supera su capacidad máxima
     if stock_actual >= CAPACIDAD_PLAYA:
         maquina_encendida = False
 
     prod_h = 0
-    if maquina_encendida and stock_actual < CAPACIDAD_PLAYA and hora_del_dia >= hora_inicio_permitida_dia:
+    if maquina_encendida and stock_actual < CAPACIDAD_PLAYA:
         espacio_libre = CAPACIDAD_PLAYA - stock_actual
         prod_h = min(vel_maquina, espacio_libre)
         stock_actual += prod_h
