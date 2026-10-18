@@ -100,7 +100,7 @@ with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
         val = st.number_input(f"Hora {h:02d}:00", min_value=0, max_value=100, value=int(val_t), key=f"tienda_h_{h}")
         tiendas_por_hora.append(val)
 
-# Control de incidencias reales para CADA DÍA (Cierre a las 23:00)
+# Control de incidencias reales para CADA DÍA (Cierre a las 23:00) - Sin límite estricto de capacidad
 with st.sidebar.expander("🛠️ Control de Cierres Reales (23:00 por Día)"):
     corregir_cierres_guardado = config_guardada.get("corregir_cierres", {})
     stocks_reales_guardados = config_guardada.get("stocks_reales_cierre", {})
@@ -117,7 +117,7 @@ with st.sidebar.expander("🛠️ Control de Cierres Reales (23:00 por Día)"):
         stocks_reales_cierre[dia] = st.number_input(
             f"Stock real 23:00 ({dia})",
             min_value=0,
-            max_value=int(CAPACIDAD_PLAYA),
+            max_value=200000,  # Ampliado para permitir valores superiores a la capacidad de la playa
             value=int(stock_val),
             step=1000,
             key=f"num_stock_cierre_{dia}"
@@ -505,7 +505,8 @@ fig.update_layout(height=950, template="plotly_white", hovermode="x unified", le
 fig.update_xaxes(tickvals=x_ticks_vals, ticktext=x_ticks_vals, tickangle=-45, showgrid=True, row=3, col=1)
 fig.update_yaxes(title_text="Picks Acumulados", row=1, col=1, showgrid=True)
 min_stock_real = min(y_picks_vals) * 0.85
-fig.update_yaxes(title_text="Stock en Playa (Picks)", range=[min_stock_real, CAPACIDAD_PLAYA * 1.10], row=2, col=1, showgrid=True)
+max_stock_grafico = max(max(y_picks_vals), CAPACIDAD_PLAYA) * 1.15
+fig.update_yaxes(title_text="Stock en Playa (Picks)", range=[min_stock_real, max_stock_grafico], row=2, col=1, showgrid=True)
 fig.update_yaxes(title_text="Horas de Adelanto", row=3, col=1, showgrid=True)
 
 # ==========================================
