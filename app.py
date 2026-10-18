@@ -100,12 +100,29 @@ with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
         val = st.number_input(f"Hora {h:02d}:00", min_value=0, max_value=100, value=int(val_t), key=f"tienda_h_{h}")
         tiendas_por_hora.append(val)
 
+# Control de incidencias reales para el Lunes
+with st.sidebar.expander("🛠️ Control de Incidencias (Cierre Lunes)"):
+    corregir_lunes_guardado = config_guardada.get("corregir_lunes", False)
+    stock_real_lunes_guardado = config_guardada.get("stock_real_lunes", 30000)
+    
+    corregir_lunes = st.checkbox("¿Hubo desviaciones el Lunes?", value=corregir_lunes_guardado, key="chk_corregir_lunes")
+    stock_real_lunes = st.number_input(
+        "Picks reales al cierre del Lunes (23:00)",
+        min_value=0,
+        max_value=int(CAPACIDAD_PLAYA),
+        value=int(stock_real_lunes_guardado),
+        step=1000,
+        key="num_stock_real_lunes"
+    )
+
 nueva_config = {
     "CAPACIDAD_PLAYA": CAPACIDAD_PLAYA,
     "vel_maquina": vel_maquina,
     "horas_arranque_por_dia": horas_arranque_por_dia,
     "demanda_servicio_por_dia": demanda_servicio_por_dia,
-    "tiendas_por_hora": tiendas_por_hora
+    "tiendas_por_hora": tiendas_por_hora,
+    "corregir_lunes": corregir_lunes,
+    "stock_real_lunes": stock_real_lunes
 }
 guardar_configuracion(nueva_config)
 
@@ -179,6 +196,12 @@ for t in range(144):
             maquina_encendida = False
 
     produccion_acumulada += prod_h
+
+    # INYECCIÓN DE STOCK REAL (LUNES A LAS 23:00) SI ESTÁ ACTIVADO
+    if t == 23 and corregir_lunes:
+        stock_actual = float(stock_real_lunes)
+        produccion_acumulada = stock_actual + demanda_acumulada
+
     prod_acum_144.append(produccion_acumulada)
     produccion_efectiva_144.append(prod_h)
     stock_playa_144.append(stock_actual)
@@ -383,7 +406,7 @@ for i in range(len(y_adelanto_vals)):
     if debe_etiquetar:
         puntos_adelanto_x.append(x_vals[i])
         puntos_adelanto_y.append(val_ad)
-        puntos_adelanto_text.append(f"{val_ad:.0f}h")  # Formato sin decimales
+        puntos_adelanto_text.append(f"{val_ad:.0f}h")  
         ultimo_val_etiquetado = val_ad
 
 if puntos_adelanto_x:
