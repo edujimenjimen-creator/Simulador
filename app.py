@@ -100,8 +100,19 @@ with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
         val = st.number_input(f"Hora {h:02d}:00", min_value=0, max_value=100, value=int(val_t), key=f"tienda_h_{h}")
         tiendas_por_hora.append(val)
 
-# Control de incidencias reales para CADA DÍA (Cierre a las 23:00)
-with st.sidebar.expander("🛠️ Control de Cierres Reales (23:00 por Día)"):
+# Control de inicio Lunes y Cierres reales (23:00)
+with st.sidebar.expander("🛠️ Control de Stocks Reales (Inicio / Cierres)"):
+    stock_inicio_lunes_guardado = config_guardada.get("stock_inicio_lunes", CAPACIDAD_PLAYA)
+    stock_inicio_lunes = st.number_input(
+        "Stock inicial real Lunes (00:00)",
+        min_value=0,
+        max_value=200000,
+        value=int(stock_inicio_lunes_guardado),
+        step=1000,
+        key="num_stock_inicio_lunes"
+    )
+    st.markdown("---")
+
     corregir_cierres_guardado = config_guardada.get("corregir_cierres", {})
     stocks_reales_guardados = config_guardada.get("stocks_reales_cierre", {})
     
@@ -130,6 +141,7 @@ nueva_config = {
     "horas_arranque_por_dia": horas_arranque_por_dia,
     "demanda_servicio_por_dia": demanda_servicio_por_dia,
     "tiendas_por_hora": tiendas_por_hora,
+    "stock_inicio_lunes": stock_inicio_lunes,
     "corregir_cierres": corregir_cierres_por_dia,
     "stocks_reales_cierre": stocks_reales_cierre
 }
@@ -158,9 +170,9 @@ for dia in dias_semana:
 # ==========================================
 # 3. MOTOR DE PRODUCCIÓN AUTÓNOMO
 # ==========================================
-stock_actual = float(CAPACIDAD_PLAYA)  
+stock_actual = float(stock_inicio_lunes)  
 demanda_acumulada = 0
-produccion_acumulada = float(CAPACIDAD_PLAYA)
+produccion_acumulada = float(stock_inicio_lunes)
 
 demanda_acum_144 = []
 prod_acum_144 = []
