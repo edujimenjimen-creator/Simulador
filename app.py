@@ -100,20 +100,29 @@ with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
         val = st.number_input(f"Hora {h:02d}:00", min_value=0, max_value=100, value=int(val_t), key=f"tienda_h_{h}")
         tiendas_por_hora.append(val)
 
-# Control de incidencias reales para el Lunes
-with st.sidebar.expander("🛠️ Control de Incidencias (Cierre Lunes)"):
-    corregir_lunes_guardado = config_guardada.get("corregir_lunes", False)
-    stock_real_lunes_guardado = config_guardada.get("stock_real_lunes", 30000)
+# Control de incidencias reales para CADA DÍA (Cierre a las 23:00)
+with st.sidebar.expander("🛠️ Control de Cierres Reales (23:00 por Día)"):
+    corregir_cierres_guardado = config_guardada.get("corregir_cierres", {})
+    stocks_reales_guardados = config_guardada.get("stocks_reales_cierre", {})
     
-    corregir_lunes = st.checkbox("¿Hubo desviaciones el Lunes?", value=corregir_lunes_guardado, key="chk_corregir_lunes")
-    stock_real_lunes = st.number_input(
-        "Picks reales al cierre del Lunes (23:00)",
-        min_value=0,
-        max_value=int(CAPACIDAD_PLAYA),
-        value=int(stock_real_lunes_guardado),
-        step=1000,
-        key="num_stock_real_lunes"
-    )
+    corregir_cierres_por_dia = {}
+    stocks_reales_cierre = {}
+    
+    for dia in dias_semana:
+        st.markdown(f"**{dia}**")
+        chk_val = corregir_cierres_guardado.get(dia, False)
+        stock_val = stocks_reales_guardados.get(dia, 30000)
+        
+        corregir_cierres_por_dia[dia] = st.checkbox(f"Ajustar cierre {dia}", value=chk_val, key=f"chk_cierre_{dia}")
+        stocks_reales_cierre[dia] = st.number_input(
+            f"Stock real 23:00 ({dia})",
+            min_value=0,
+            max_value=int(CAPACIDAD_PLAYA),
+            value=int(stock_val),
+            step=1000,
+            key=f"num_stock_cierre_{dia}"
+        )
+        st.markdown("---")
 
 nueva_config = {
     "CAPACIDAD_PLAYA": CAPACIDAD_PLAYA,
@@ -121,8 +130,8 @@ nueva_config = {
     "horas_arranque_por_dia": horas_arranque_por_dia,
     "demanda_servicio_por_dia": demanda_servicio_por_dia,
     "tiendas_por_hora": tiendas_por_hora,
-    "corregir_lunes": corregir_lunes,
-    "stock_real_lunes": stock_real_lunes
+    "corregir_cierres": corregir_cierres_por_dia,
+    "stocks_reales_cierre": stocks_reales_cierre
 }
 guardar_configuracion(nueva_config)
 
@@ -160,6 +169,7 @@ adelanto_horas_144 = []
 produccion_efectiva_144 = []
 ultima_tienda_preparada_144 = []
 tiendas_en_playa_144 = []
+cierres_ajustados_144 = [False] * 144
 
 maquina_encendida = False
 ultimo_texto_tienda = "Lun 00:00"
@@ -197,10 +207,12 @@ for t in range(144):
 
     produccion_acumulada += prod_h
 
-    # INYECCIÓN DE STOCK REAL (LUNES A LAS 23:00) SI ESTÁ ACTIVADO
-    if t == 23 and corregir_lunes:
-        stock_actual = float(stock_real_lunes)
+    # INYECCIÓN DE STOCK REAL A LAS 23:00 PARA CUALQUIER DÍA CONFIGURADO
+    if hora_del_dia == 23 and corregir_cierres_por_dia.get(dia_actual, False):
+        stock_real_objetivo = float(stocks_reales_cierre.get(dia_actual, stock_actual))
+        stock_actual = stock_real_objetivo
         produccion_acumulada = stock_actual + demanda_acumulada
+        cierres_ajustados_144[t] = True
 
     prod_acum_144.append(produccion_acumulada)
     produccion_efectiva_144.append(prod_h)
@@ -243,6 +255,7 @@ for t in range(144):
 # ==========================================
 df_completo_ajustado = []
 hitos_produccion = []
+hitos_ajustes_reales = []
 
 for dia_idx, dia in enumerate(dias_semana):
     p_h_dia = produccion_efectiva_144[dia_idx * 24 : (dia_idx + 1) * 24]
@@ -254,6 +267,7 @@ for dia_idx, dia in enumerate(dias_semana):
     adelanto_dia = adelanto_horas_144[dia_idx * 24 : (dia_idx + 1) * 24]
     ult_tienda_dia = ultima_tienda_preparada_144[dia_idx * 24 : (dia_idx + 1) * 24]
     tiendas_playa_dia = tiendas_en_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    ajustes_dia = cierres_ajustados_144[dia_idx * 24 : (dia_idx + 1) * 24]
 
     horas_activas = [i for i, p in enumerate(p_h_dia) if p > 0]
     if horas_activas:
@@ -298,6 +312,14 @@ for dia_idx, dia in enumerate(dias_semana):
 
     for h_idx in range(24):
         stock_actual_h = stock_playa_dia[h_idx]
+        is_ajustado = ajustes_dia[h_idx]
+
+        if is_ajustado:
+            hitos_ajustes_reales.append({
+                "eje_x": f"{dia[:3]} {horas_24[h_idx]}",
+                "y_stock": stock_actual_h,
+                "texto": f"CIERRE REAL: {stock_actual_h:,.0f} p."
+            })
 
         df_completo_ajustado.append({
             "Eje_X": f"{dia[:3]} {horas_24[h_idx]}",
@@ -441,6 +463,27 @@ for hito in hitos_produccion:
         borderpad=4, 
         font=dict(size=9, color="#990000" if is_fin else "#1b5e20", family="sans-serif"),
         row=1, col=1
+    )
+
+# ANOTACIONES VISUALES PARA CIERRES REALES AJUSTADOS (EN GRÁFICO DE STOCK)
+for ajuste in hitos_ajustes_reales:
+    fig.add_annotation(
+        x=ajuste["eje_x"],
+        y=ajuste["y_stock"],
+        text=ajuste["texto"],
+        showarrow=True,
+        arrowhead=2,
+        arrowsize=0.7,
+        arrowwidth=1.2,
+        arrowcolor="#ff7f0e",
+        ax=0,
+        ay=-35,
+        bgcolor="rgba(255, 243, 205, 0.95)",
+        bordercolor="#ff7f0e",
+        borderwidth=1.2,
+        borderpad=4,
+        font=dict(size=9, color="#856404", family="sans-serif"),
+        row=2, col=1
     )
 
 max_y_picks = max(df_plot["Demanda_Acum"].max(), df_plot["Prod_Acum"].max())
