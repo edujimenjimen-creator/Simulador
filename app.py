@@ -402,7 +402,7 @@ for dia_idx, dia in enumerate(dias_semana):
 df_plot = pd.DataFrame(df_completo_ajustado)
 
 # ==========================================
-# 5. GRÁFICO PLOTLY (3 FILAS) CON SOMBREADO AZUL DINÁMICO
+# 5. GRÁFICO PLOTLY (3 FILAS) CON LÍNEA VERTICAL AZUL DE PREPARACIÓN
 # ==========================================
 fig = make_subplots(
     rows=3,
@@ -417,32 +417,27 @@ fig = make_subplots(
     ),
 )
 
-# --- SOMBREADO AZUL DINÁMICO DE PREPARACIÓN ---
-try:
-    hora_preparando_texto = df_plot["Preparando Por"].iloc[-1]
-    if hora_preparando_texto in df_plot["Eje_X"].values:
-        idx_fin = df_plot[df_plot["Eje_X"] == hora_preparando_texto].index[0]
-        x1_val = df_plot["Eje_X"].iloc[idx_fin]
-    else:
-        x1_val = df_plot["Eje_X"].iloc[-1]
-        
-    fig.add_vrect(
-        x0=df_plot["Eje_X"].iloc[0],
-        x1=x1_val,
-        fillcolor="rgba(31, 119, 180, 0.12)",
-        layer="below",
-        line_width=1,
-        line_color="rgba(31, 119, 180, 0.3)",
-        line_dash="dash",
-        row=1, col=1
-    )
-except Exception:
-    pass
-
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Demanda_Acum"], name="Demanda Acumulada", line=dict(color="#ff7f0e", width=2.5)), row=1, col=1)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Producción Acumulada + Stock", line=dict(color="#2ca02c", width=2.5)), row=1, col=1)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Stock_Playa"], name="Stock en Playa (Picks)", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Horas Adelanto"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), fill='tozeroy', hoverinfo="skip"), row=3, col=1)
+
+# --- LÍNEA VERTICAL AZUL INDICADORA DE HORIZONTE DE PREPARACIÓN ---
+try:
+    hora_preparando = df_plot["Preparando Por"].iloc[-1]
+    if hora_preparando in df_plot["Eje_X"].values:
+        fig.add_vline(
+            x=hora_preparando,
+            line_dash="dash",
+            line_color="#1f77b4",
+            line_width=2.5,
+            annotation_text=f"📍 Preparando: {hora_preparando}",
+            annotation_position="top right",
+            annotation_font=dict(color="#1f77b4", size=10, family="sans-serif"),
+            row=1, col=1
+        )
+except Exception:
+    pass
 
 x_vals = df_plot["Eje_X"].values
 y_picks_vals = df_plot["Stock_Playa"].values
