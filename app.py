@@ -242,7 +242,6 @@ for t in range(144):
         if espacio_libre_playa <= 0:
             motivo = "PLAYA LLENA"
         elif dia_actual == "Sábado":
-            # El sábado trabaja de forma libre hasta que se llene la playa
             prod_h = min(vel_maquina, espacio_libre_playa)
             stock_actual += prod_h
             motivo = "PRODUCIENDO" if prod_h > 0 else "PLAYA LLENA"
@@ -403,7 +402,7 @@ for dia_idx, dia in enumerate(dias_semana):
 df_plot = pd.DataFrame(df_completo_ajustado)
 
 # ==========================================
-# 5. GRÁFICO PLOTLY (3 FILAS)
+# 5. GRÁFICO PLOTLY (3 FILAS) CON SOMBREADO AZUL DE PREPARACIÓN
 # ==========================================
 fig = make_subplots(
     rows=3,
@@ -416,6 +415,23 @@ fig = make_subplots(
         "Evolución del Stock Exacto en Playa (Picks)",
         "Horas de Adelanto / Autonomía en Playa (Horas)",
     ),
+)
+
+# --- SOMBREADO AZUL CLARO DE PREPARACIÓN HASTA LA ÚLTIMA TIENDA CUBIERTA ---
+# Se calcula la franja azul en base a la última tienda cubierta al final de la semana o al punto activo
+hora_preparando_final = df_plot["Preparando Por"].iloc[-1]
+if hora_preparando_final in df_plot["Eje_X"].values:
+    x_fin_sombra = hora_preparando_final
+else:
+    x_fin_sombra = df_plot["Eje_X"].iloc[-1]
+
+fig.add_vrect(
+    x0=df_plot["Eje_X"].iloc[0],
+    x1=x_fin_sombra,
+    fillcolor="rgba(31, 119, 180, 0.08)",
+    layer="below",
+    line_width=0,
+    row=1, col=1
 )
 
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Demanda_Acum"], name="Demanda Acumulada", line=dict(color="#ff7f0e", width=2.5)), row=1, col=1)
