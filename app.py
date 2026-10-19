@@ -7,7 +7,7 @@ from plotly.subplots import make_subplots
 import streamlit as st
 
 # ==========================================
-# 0. PERSISTENCIA EN RUTA COMPARTIDA CON GESTIÓN DE ESCENARIOS
+# 0. PERSISTENCIA EN RUTA COMPARTIDA CON GESTIÓN Y BORRADO DE ESCENARIOS
 # ==========================================
 RUTA_COMPARTIDA = os.path.join(os.environ.get("PUBLIC", "C:\\Users\\Public"), "OPM_Config")
 
@@ -21,11 +21,10 @@ st.set_page_config(page_title="OPM - Planificación Semanal", layout="wide")
 st.title("🏭 OPM: Planificación semanal")
 
 # ==========================================
-# GESTOR DE ARCHIVOS / ESCENARIOS EN SIDEBAR
+# GESTOR DE ESCENARIOS (SELECCIÓN, NUEVO Y BORRADO)
 # ==========================================
 st.sidebar.header("📁 Gestión de Escenarios")
 
-# Listar archivos JSON existentes en la carpeta compartida
 try:
     archivos_existentes = [f.replace(".json", "") for f in os.listdir(RUTA_COMPARTIDA) if f.endswith(".json")]
 except Exception:
@@ -46,6 +45,17 @@ else:
     nombre_archivo_activo = escenario_seleccionado + ".json"
 
 CONFIG_FILE = os.path.join(RUTA_COMPARTIDA, nombre_archivo_activo)
+
+# --- BOTÓN PARA BORRAR EL ESCENARIO ACTUAL ---
+if len(archivos_existentes) > 1 and not nuevo_nombre.strip():
+    if st.sidebar.button("🗑️ Borrar este escenario", type="secondary"):
+        try:
+            if os.path.exists(CONFIG_FILE):
+                os.remove(CONFIG_FILE)
+                st.sidebar.success(f"Escenario '{escenario_seleccionado}' borrado.")
+                st.rerun()
+        except Exception as e:
+            st.sidebar.error(f"No se pudo borrar: {e}")
 
 def cargar_configuracion():
     if os.path.exists(CONFIG_FILE):
