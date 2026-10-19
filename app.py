@@ -40,7 +40,7 @@ st.title("🏭 OPM: Planificación semanal")
 # ==========================================
 st.sidebar.header("⚙ Parámetros del Sistema")
 
-val_capacidad = config_guardada.get("CAPACIDAD_PLAYA", 40000)
+val_capacidad = config_guardada.get("CAPACIDAD_PLAYA", 45000)
 CAPACIDAD_PLAYA = st.sidebar.slider(
     "Capacidad Máxima de la Playa (Picks)",
     min_value=10000,
@@ -49,7 +49,7 @@ CAPACIDAD_PLAYA = st.sidebar.slider(
     step=5000,
 )
 
-val_vel = config_guardada.get("vel_maquina", 5000)
+val_vel = config_guardada.get("vel_maquina", 4500)
 vel_maquina = st.sidebar.number_input(
     "Velocidad de Máquina (Picks/hora)",
     min_value=1000,
@@ -69,7 +69,7 @@ with st.sidebar.expander("⏰ Horarios de Inicio y Fin por Día"):
     
     for dia in dias_semana:
         st.markdown(f"**{dia}**")
-        val_arranque = horas_arranque_guardadas.get(dia, 4)
+        val_arranque = horas_arranque_guardadas.get(dia, 18 if dia == "Lunes" else 6)
         val_fin = horas_fin_guardadas.get(dia, 24)
 
         st.markdown("<span style='color: #2e7d32; font-weight: bold;'>🟢 Hora Inicio</span>", unsafe_allow_html=True)
@@ -96,8 +96,8 @@ with st.sidebar.expander("⏰ Horarios de Inicio y Fin por Día"):
         st.markdown("---")
 
 demanda_guardada = config_guardada.get("demanda_servicio_por_dia", {
-    "Lunes": 70000, "Martes": 50000, "Miércoles": 75000, 
-    "Jueves": 80000, "Viernes": 89000, "Sábado": 60000
+    "Lunes": 41347, "Martes": 37881, "Miércoles": 37694, 
+    "Jueves": 50694, "Viernes": 64604, "Sábado": 54360
 })
 
 with st.sidebar.expander("📅 Demanda Diaria de Servicio (Picks)"):
@@ -107,8 +107,8 @@ with st.sidebar.expander("📅 Demanda Diaria de Servicio (Picks)"):
             dia, 
             min_value=10000, 
             max_value=200000, 
-            value=int(demanda_guardada.get(dia, 70000)), 
-            step=5000,
+            value=int(demanda_guardada.get(dia, 40000)), 
+            step=1000,
             key=f"demanda_{dia}"
         )
 
@@ -122,7 +122,7 @@ with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
         tiendas_por_hora.append(val)
 
 with st.sidebar.expander("🛠️ Control de Stocks Reales (Inicio / Cierres)"):
-    stock_inicio_lunes_guardado = config_guardada.get("stock_inicio_lunes", CAPACIDAD_PLAYA)
+    stock_inicio_lunes_guardado = config_guardada.get("stock_inicio_lunes", 40552)
     stock_inicio_lunes = st.number_input(
         "Stock inicial real Lunes (00:00)",
         min_value=0,
@@ -189,7 +189,7 @@ for dia in dias_semana:
     tiendas_h_144.extend(tiendas_por_hora)
 
 # ==========================================
-# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO
+# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO CON REGLA DE VOLCADO
 # ==========================================
 stock_actual = float(stock_inicio_lunes)  
 demanda_acumulada = 0
@@ -203,6 +203,7 @@ produccion_efectiva_144 = []
 ultima_tienda_preparada_144 = []
 tiendas_en_playa_144 = []
 cierres_ajustados_144 = [False] * 144
+motivos_estado_144 = []
 
 ultimo_texto_tienda = "Lun 00:00"
 
@@ -222,13 +223,38 @@ for t in range(144):
     if stock_actual < 0:
         stock_actual = 0  
 
+    # --- REGLA DE VOLCADO DE PEDIDOS ---
+    # 1. Los pedidos del día en curso ya están disponibles.
+    # 2. Los pedidos del día siguiente se vuelcan el día anterior a las 04:00h.
+    demanda_volcada_hasta_t = 0
+    # Demanda de los días ya pasados y del día actual
+    for d_i in range(dia_idx + 1):
+        demanda_volcada_hasta_t += demanda_servicio_por_dia[dias_semana[d_i]]
+    
+    # Si ya son >= las 04:00h, se le suma el volcado del día siguiente (si existe en la semana)
+    if hora_del_dia >= 4 and (dia_idx + 1) < len(dias_semana):
+        demanda_volcada_hasta_t += demanda_servicio_por_dia[dias_semana[dia_idx + 1]]
+
     esta_en_horario = hora_inicio_permitida_dia <= hora_del_dia < hora_fin_permitida_dia
 
     prod_h = 0
-    if esta_en_horario and stock_actual < CAPACIDAD_PLAYA:
-        espacio_libre = CAPACIDAD_PLAYA - stock_actual
-        prod_h = min(vel_maquina, espacio_libre)
-        stock_actual += prod_h
+    motivo = "PARADA"
+    
+    if esta_en_horario:
+        espacio_libre_playa = CAPACIDAD_PLAYA - stock_actual
+        # Cuántos picks volcados en el sistema quedan aún por fabricar
+        pedidos_pendientes_fabricar = demanda_volcada_hasta_t - produccion_acumulada
+
+        if espacio_libre_playa <= 0:
+            motivo = "PLAYA LLENA"
+        elif pedidos_pendientes_fabricar <= 0:
+            motivo = "PENDIENTE VOLCADO (SIN PEDIDOS)"
+        else:
+            prod_h = min(vel_maquina, espacio_libre_playa, max(0.0, pedidos_pendientes_fabricar))
+            stock_actual += prod_h
+            motivo = "PRODUCIENDO" if prod_h > 0 else "SIN TRABAJO"
+    else:
+        motivo = "FUERA DE HORARIO"
 
     produccion_acumulada += prod_h
 
@@ -241,6 +267,7 @@ for t in range(144):
     prod_acum_144.append(produccion_acumulada)
     produccion_efectiva_144.append(prod_h)
     stock_playa_144.append(stock_actual)
+    motivos_estado_144.append(motivo)
     
     horas_adelanto = int(round(stock_actual / vel_maquina)) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
@@ -261,14 +288,12 @@ for t in range(144):
     
     ultima_tienda_preparada_144.append(ultimo_texto_tienda)
 
-    # Cálculo correcto y acotado según las tiendas configuradas en las franjas horarias
     dem_dia_actual = demanda_servicio_por_dia[dia_actual]
     tiendas_dia_total = sum(tiendas_por_hora)
     picks_por_tienda_dia = dem_dia_actual / tiendas_dia_total if tiendas_dia_total > 0 else 1000
     
     if stock_actual > 0 and picks_por_tienda_dia > 0:
         tiendas_en_playa = round(stock_actual / picks_por_tienda_dia)
-        # Limitado para que nunca supere el total de tiendas configuradas en tu perfil horario
         tiendas_en_playa = min(tiendas_en_playa, tiendas_dia_total)
         tiendas_en_playa_144.append(int(tiendas_en_playa))
     else:
@@ -280,6 +305,7 @@ for t in range(144):
 df_completo_ajustado = []
 hitos_produccion = []
 hitos_ajustes_reales = []
+hitos_paradas_volcado = []
 
 for dia_idx, dia in enumerate(dias_semana):
     p_h_dia = produccion_efectiva_144[dia_idx * 24 : (dia_idx + 1) * 24]
@@ -292,6 +318,7 @@ for dia_idx, dia in enumerate(dias_semana):
     ult_tienda_dia = ultima_tienda_preparada_144[dia_idx * 24 : (dia_idx + 1) * 24]
     tiendas_playa_dia = tiendas_en_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
     ajustes_dia = cierres_ajustados_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    motivos_dia = motivos_estado_144[dia_idx * 24 : (dia_idx + 1) * 24]
 
     horas_activas = [i for i, p in enumerate(p_h_dia) if p > 0]
     if horas_activas:
@@ -344,6 +371,13 @@ for dia_idx, dia in enumerate(dias_semana):
                 "y_stock": stock_actual_h,
                 "texto": f"CIERRE REAL: {stock_actual_h:,.0f} p."
             })
+            
+        if motivos_dia[h_idx] == "PENDIENTE VOLCADO (SIN PEDIDOS)":
+            hitos_paradas_volcado.append({
+                "eje_x": f"{dia[:3]} {horas_24[h_idx]}",
+                "y_val": prod_acum_dia[h_idx],
+                "texto": "⏳ Esperando Volcado"
+            })
 
         df_completo_ajustado.append({
             "Eje_X": f"{dia[:3]} {horas_24[h_idx]}",
@@ -357,7 +391,7 @@ for dia_idx, dia in enumerate(dias_semana):
             "Horas Adelanto": adelanto_dia[h_idx],
             "Preparando Por": ult_tienda_dia[h_idx],
             "Tiendas_En_Playa": tiendas_playa_dia[h_idx],
-            "Estado": "PRODUCIENDO" if p_h_dia[h_idx] > 0 else "PARADA",
+            "Estado": motivos_dia[h_idx],
         })
 
 df_plot = pd.DataFrame(df_completo_ajustado)
@@ -383,6 +417,7 @@ fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Produ
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Stock_Playa"], name="Stock en Playa (Picks)", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Horas Adelanto"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), fill='tozeroy', hoverinfo="skip"), row=3, col=1)
 
+# Puntos destacados en stock
 x_vals = df_plot["Eje_X"].values
 y_picks_vals = df_plot["Stock_Playa"].values
 
@@ -425,6 +460,7 @@ if puntos_x:
         showlegend=False
     ), row=2, col=1)
 
+# Horas de adelanto
 y_adelanto_vals = df_plot["Horas Adelanto"].values
 puntos_adelanto_x, puntos_adelanto_y, puntos_adelanto_text = [], [], []
 ultimo_val_etiquetado = -9999
@@ -465,6 +501,7 @@ if puntos_adelanto_x:
         showlegend=False
     ), row=3, col=1)
 
+# Annotations de Turno Inicio/Fin
 for hito in hitos_produccion:
     is_fin = hito["tipo"] == "FIN"
     fig.add_annotation(
@@ -483,6 +520,27 @@ for hito in hitos_produccion:
         borderwidth=1.2, 
         borderpad=4, 
         font=dict(size=9, color="#990000" if is_fin else "#1b5e20", family="sans-serif"),
+        row=1, col=1
+    )
+
+# Annotations de Parada por Falta de Volcado (SIN PEDIDOS)
+for hito_v in hitos_paradas_volcado:
+    fig.add_annotation(
+        x=hito_v["eje_x"],
+        y=hito_v["y_val"],
+        text=hito_v["texto"],
+        showarrow=True,
+        arrowhead=2,
+        arrowsize=0.7,
+        arrowwidth=1.2,
+        arrowcolor="#d32f2f",
+        ax=0,
+        ay=-35,
+        bgcolor="rgba(255, 235, 238, 0.95)",
+        bordercolor="#d32f2f",
+        borderwidth=1.2,
+        borderpad=4,
+        font=dict(size=8, color="#900c3f", family="sans-serif"),
         row=1, col=1
     )
 
