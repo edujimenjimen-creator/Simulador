@@ -201,7 +201,6 @@ stock_playa_144 = []
 adelanto_horas_144 = []
 produccion_efectiva_144 = []
 ultima_tienda_preparada_144 = []
-idx_preparando_144 = []
 tiendas_en_playa_144 = []
 cierres_ajustados_144 = [False] * 144
 motivos_estado_144 = []
@@ -271,7 +270,7 @@ for t in range(144):
     horas_adelanto = int(round(stock_actual / vel_maquina)) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
 
-    # Cálculo exacto del índice futuro cubierto por el stock de playa
+    # Cálculo exacto de día y hora que se están preparando con el stock actual
     cursor_sim = t
     if stock_actual > 0:
         stock_temp = stock_actual
@@ -292,7 +291,6 @@ for t in range(144):
         ultimo_texto_tienda = f"{d_fin_str} {h_fin_str}"
 
     ultima_tienda_preparada_144.append(ultimo_texto_tienda)
-    idx_preparando_144.append(cursor_sim)
 
     dem_dia_actual = demanda_servicio_por_dia[dia_actual]
     tiendas_dia_total = sum(tiendas_por_hora)
@@ -306,7 +304,7 @@ for t in range(144):
         tiendas_en_playa_144.append(0)
 
 # ==========================================
-# 4. CONSTRUCCIÓN DE DATOS E HITOS
+# 4. CONSTRUCCIÓN DE DATOS E HITOS (CON PREPARANDO EN RECUADRO FIN)
 # ==========================================
 df_completo_ajustado = []
 hitos_produccion = []
@@ -322,7 +320,6 @@ for dia_idx, dia in enumerate(dias_semana):
     stock_playa_dia = stock_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
     adelanto_dia = adelanto_horas_144[dia_idx * 24 : (dia_idx + 1) * 24]
     ult_tienda_dia = ultima_tienda_preparada_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    idx_prep_dia = idx_preparando_144[dia_idx * 24 : (dia_idx + 1) * 24]
     tiendas_playa_dia = tiendas_en_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
     ajustes_dia = cierres_ajustados_144[dia_idx * 24 : (dia_idx + 1) * 24]
     motivos_dia = motivos_estado_144[dia_idx * 24 : (dia_idx + 1) * 24]
@@ -350,22 +347,26 @@ for dia_idx, dia in enumerate(dias_semana):
                 "y_val": prod_acum_dia[h_ini],
                 "texto": f"INICIO {horas_24[h_ini]}<br>({stock_ini_val:,.0f} p.)",
             })
+            
             if h_fin == 23:
                 etiqueta_fin = "24:00"
                 eje_x_fin = f"{dia[:3]} 23:00"
                 y_val_fin = prod_acum_dia[23]
                 stock_fin_val = stock_playa_dia[23]
+                prep_fin_val = ult_tienda_dia[23]
             else:
                 etiqueta_fin = horas_24[h_fin + 1]
                 eje_x_fin = f"{dia[:3]} {horas_24[h_fin + 1]}"
                 y_val_fin = prod_acum_dia[h_fin + 1]
                 stock_fin_val = stock_playa_dia[h_fin + 1]
+                prep_fin_val = ult_tienda_dia[h_fin + 1]
 
+            # En el recuadro FIN añadimos la línea azul con el horizonte "Prep:"
             hitos_produccion.append({
                 "tipo": "FIN",
                 "eje_x": eje_x_fin,
                 "y_val": y_val_fin,
-                "texto": f"FIN {etiqueta_fin}<br>({stock_fin_val:,.0f} p.)",
+                "texto": f"FIN {etiqueta_fin}<br>({stock_fin_val:,.0f} p.)<br><span style='color:#0b5ed7; font-weight:bold;'>Prep: {prep_fin_val}</span>",
             })
 
     en_parada_volcado = False
@@ -402,7 +403,6 @@ for dia_idx, dia in enumerate(dias_semana):
             "Stock_Playa": stock_actual_h,
             "Horas Adelanto": adelanto_dia[h_idx],
             "Preparando Por": ult_tienda_dia[h_idx],
-            "Idx_Preparando": idx_prep_dia[h_idx],
             "Tiendas_En_Playa": tiendas_playa_dia[h_idx],
             "Estado": motivos_dia[h_idx],
         })
@@ -429,24 +429,6 @@ fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Demanda_Acum"], name="De
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Producción Acumulada + Stock", line=dict(color="#2ca02c", width=2.5)), row=1, col=1)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Stock_Playa"], name="Stock en Playa (Picks)", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Horas Adelanto"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), fill='tozeroy', hoverinfo="skip"), row=3, col=1)
-
-# --- LÍNEA VERTICAL AZUL EN LA ÚLTIMA HORA CUBIERTA POR EL STOCK DE PLAYA ---
-try:
-    pos_idx = int(df_plot["Idx_Preparando"].iloc[-1])
-    eje_x_linea_azul = df_plot["Eje_X"].iloc[pos_idx]
-    
-    fig.add_vline(
-        x=eje_x_linea_azul,
-        line_dash="dash",
-        line_color="#0b5ed7",
-        line_width=2.5,
-        annotation_text=f"📍 Preparando: {eje_x_linea_azul}",
-        annotation_position="top right",
-        annotation_font=dict(color="#0b5ed7", size=11, family="sans-serif"),
-        row=1, col=1
-    )
-except Exception:
-    pass
 
 x_vals = df_plot["Eje_X"].values
 y_picks_vals = df_plot["Stock_Playa"].values
@@ -530,6 +512,7 @@ if puntos_adelanto_x:
         showlegend=False
     ), row=3, col=1)
 
+# Annotations de Turno Inicio/Fin
 for hito in hitos_produccion:
     is_fin = hito["tipo"] == "FIN"
     fig.add_annotation(
@@ -542,8 +525,8 @@ for hito in hitos_produccion:
         arrowwidth=1.0,
         arrowcolor="#e31a1c" if is_fin else "#33a02c",
         ax=0, 
-        ay=-45 if is_fin else 45,
-        bgcolor="rgba(255, 255, 255, 0.92)", 
+        ay=-55 if is_fin else 45,
+        bgcolor="rgba(255, 255, 255, 0.95)", 
         bordercolor="#e31a1c" if is_fin else "#33a02c",
         borderwidth=1.2, 
         borderpad=4, 
