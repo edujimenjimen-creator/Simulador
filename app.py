@@ -7,9 +7,18 @@ from plotly.subplots import make_subplots
 import streamlit as st
 
 # ==========================================
-# 0. PERSISTENCIA DE CONFIGURACIÓN (JSON)
+# 0. PERSISTENCIA EN RUTA COMPARTIDA LOCAL
 # ==========================================
-CONFIG_FILE = "config_opm.json"
+# Definimos una carpeta accesible para todos los usuarios del PC (C:\Users\Public\OPM_Config)
+RUTA_COMPARTIDA = os.path.join(os.environ.get("PUBLIC", "C:\\Users\\Public"), "OPM_Config")
+
+if not os.path.exists(RUTA_COMPARTIDA):
+    try:
+        os.makedirs(RUTA_COMPARTIDA, exist_ok=True)
+    except Exception:
+        RUTA_COMPARTIDA = "."
+
+CONFIG_FILE = os.path.join(RUTA_COMPARTIDA, "config_opm.json")
 
 def cargar_configuracion():
     if os.path.exists(CONFIG_FILE):
@@ -25,7 +34,7 @@ def guardar_configuracion(config):
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=4)
     except Exception as e:
-        st.sidebar.error(f"Error al guardar configuración: {e}")
+        st.sidebar.error(f"Error al guardar configuración compartida: {e}")
 
 config_guardada = cargar_configuracion()
 
@@ -361,7 +370,6 @@ for dia_idx, dia in enumerate(dias_semana):
                 stock_fin_val = stock_playa_dia[h_fin + 1]
                 prep_fin_val = ult_tienda_dia[h_fin + 1]
 
-            # En el recuadro FIN añadimos la línea azul con el horizonte "Prep:"
             hitos_produccion.append({
                 "tipo": "FIN",
                 "eje_x": eje_x_fin,
@@ -512,7 +520,6 @@ if puntos_adelanto_x:
         showlegend=False
     ), row=3, col=1)
 
-# Annotations de Turno Inicio/Fin
 for hito in hitos_produccion:
     is_fin = hito["tipo"] == "FIN"
     fig.add_annotation(
