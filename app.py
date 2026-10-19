@@ -7,9 +7,8 @@ from plotly.subplots import make_subplots
 import streamlit as st
 
 # ==========================================
-# 0. PERSISTENCIA EN RUTA COMPARTIDA LOCAL
+# 0. PERSISTENCIA EN RUTA COMPARTIDA CON GESTIÓN DE ESCENARIOS
 # ==========================================
-# Definimos una carpeta accesible para todos los usuarios del PC (C:\Users\Public\OPM_Config)
 RUTA_COMPARTIDA = os.path.join(os.environ.get("PUBLIC", "C:\\Users\\Public"), "OPM_Config")
 
 if not os.path.exists(RUTA_COMPARTIDA):
@@ -18,7 +17,35 @@ if not os.path.exists(RUTA_COMPARTIDA):
     except Exception:
         RUTA_COMPARTIDA = "."
 
-CONFIG_FILE = os.path.join(RUTA_COMPARTIDA, "config_opm.json")
+st.set_page_config(page_title="OPM - Planificación Semanal", layout="wide")
+st.title("🏭 OPM: Planificación semanal")
+
+# ==========================================
+# GESTOR DE ARCHIVOS / ESCENARIOS EN SIDEBAR
+# ==========================================
+st.sidebar.header("📁 Gestión de Escenarios")
+
+# Listar archivos JSON existentes en la carpeta compartida
+try:
+    archivos_existentes = [f.replace(".json", "") for f in os.listdir(RUTA_COMPARTIDA) if f.endswith(".json")]
+except Exception:
+    archivos_existentes = []
+
+if not archivos_existentes:
+    archivos_existentes = ["config_opm"]
+
+col_esc1, col_esc2 = st.sidebar.columns([2, 1])
+with col_esc1:
+    escenario_seleccionado = st.selectbox("Seleccionar Escenario:", archivos_existentes, index=0)
+with col_esc2:
+    nuevo_nombre = st.text_input("Nuevo:", value="", placeholder="Ej: Semana_2")
+
+if nuevo_nombre.strip():
+    nombre_archivo_activo = nuevo_nombre.strip() + ".json"
+else:
+    nombre_archivo_activo = escenario_seleccionado + ".json"
+
+CONFIG_FILE = os.path.join(RUTA_COMPARTIDA, nombre_archivo_activo)
 
 def cargar_configuracion():
     if os.path.exists(CONFIG_FILE):
@@ -34,15 +61,9 @@ def guardar_configuracion(config):
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=4)
     except Exception as e:
-        st.sidebar.error(f"Error al guardar configuración compartida: {e}")
+        st.sidebar.error(f"Error al guardar escenario: {e}")
 
 config_guardada = cargar_configuracion()
-
-# ==========================================
-# 0. CONFIGURACIÓN DE PÁGINA STREAMLIT
-# ==========================================
-st.set_page_config(page_title="OPM - Planificación Semanal", layout="wide")
-st.title("🏭 OPM: Planificación semanal")
 
 # ==========================================
 # 1. PARÁMETROS CONFIGURABLES (VÍA SIDEBAR)
@@ -279,7 +300,6 @@ for t in range(144):
     horas_adelanto = int(round(stock_actual / vel_maquina)) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
 
-    # Cálculo exacto de día y hora que se están preparando con el stock actual
     cursor_sim = t
     if stock_actual > 0:
         stock_temp = stock_actual
@@ -313,7 +333,7 @@ for t in range(144):
         tiendas_en_playa_144.append(0)
 
 # ==========================================
-# 4. CONSTRUCCIÓN DE DATOS E HITOS (CON PREPARANDO EN RECUADRO FIN)
+# 4. CONSTRUCCIÓN DE DATOS E HITOS
 # ==========================================
 df_completo_ajustado = []
 hitos_produccion = []
@@ -427,7 +447,7 @@ fig = make_subplots(
     vertical_spacing=0.06,
     row_heights=[0.50, 0.25, 0.25],
     subplot_titles=(
-        f"OPM GUADIX - Control por Horarios (Playa: {CAPACIDAD_PLAYA:,.0f} picks)",
+        f"OPM ({escenario_seleccionado}) - Control por Horarios (Playa: {CAPACIDAD_PLAYA:,.0f} picks)",
         "Evolución del Stock Exacto en Playa (Picks)",
         "Horas de Adelanto / Autonomía en Playa (Horas)",
     ),
