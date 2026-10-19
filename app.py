@@ -7,9 +7,8 @@ from plotly.subplots import make_subplots
 import streamlit as st
 
 # ==========================================
-# 0. PERSISTENCIA EN RUTA COMPARTIDA LOCAL
+# 0. PERSISTENCIA EN RUTA COMPARTIDA CON GESTIÓN Y BORRADO DE ESCENARIOS
 # ==========================================
-# Definimos una carpeta accesible para todos los usuarios del PC (C:\Users\Public\OPM_Config)
 RUTA_COMPARTIDA = os.path.join(os.environ.get("PUBLIC", "C:\\Users\\Public"), "OPM_Config")
 
 if not os.path.exists(RUTA_COMPARTIDA):
@@ -18,7 +17,45 @@ if not os.path.exists(RUTA_COMPARTIDA):
     except Exception:
         RUTA_COMPARTIDA = "."
 
-CONFIG_FILE = os.path.join(RUTA_COMPARTIDA, "config_opm.json")
+st.set_page_config(page_title="OPM - Planificación Semanal", layout="wide")
+st.title("🏭 OPM: Planificación semanal")
+
+# ==========================================
+# GESTOR DE ESCENARIOS (SELECCIÓN, NUEVO Y BORRADO)
+# ==========================================
+st.sidebar.header("📁 Gestión de Escenarios")
+
+try:
+    archivos_existentes = [f.replace(".json", "") for f in os.listdir(RUTA_COMPARTIDA) if f.endswith(".json")]
+except Exception:
+    archivos_existentes = []
+
+if not archivos_existentes:
+    archivos_existentes = ["config_opm"]
+
+col_esc1, col_esc2 = st.sidebar.columns([2, 1])
+with col_esc1:
+    escenario_seleccionado = st.selectbox("Seleccionar Escenario:", archivos_existentes, index=0)
+with col_esc2:
+    nuevo_nombre = st.text_input("Nuevo:", value="", placeholder="Ej: Semana_2")
+
+if nuevo_nombre.strip():
+    nombre_archivo_activo = nuevo_nombre.strip() + ".json"
+else:
+    nombre_archivo_activo = escenario_seleccionado + ".json"
+
+CONFIG_FILE = os.path.join(RUTA_COMPARTIDA, nombre_archivo_activo)
+
+# --- BOTÓN PARA BORRAR EL ESCENARIO ACTUAL ---
+if len(archivos_existentes) > 1 and not nuevo_nombre.strip():
+    if st.sidebar.button("🗑️ Borrar este escenario", type="secondary"):
+        try:
+            if os.path.exists(CONFIG_FILE):
+                os.remove(CONFIG_FILE)
+                st.sidebar.success(f"Escenario '{escenario_seleccionado}' borrado.")
+                st.rerun()
+        except Exception as e:
+            st.sidebar.error(f"No se pudo borrar: {e}")
 
 def cargar_configuracion():
     if os.path.exists(CONFIG_FILE):
@@ -34,15 +71,9 @@ def guardar_configuracion(config):
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=4)
     except Exception as e:
-        st.sidebar.error(f"Error al guardar configuración compartida: {e}")
+        st.sidebar.error(f"Error al guardar escenario: {e}")
 
 config_guardada = cargar_configuracion()
-
-# ==========================================
-# 0. CONFIGURACIÓN DE PÁGINA STREAMLIT
-# ==========================================
-st.set_page_config(page_title="OPM - Planificación Semanal", layout="wide")
-st.title("🏭 OPM: Planificación semanal")
 
 # ==========================================
 # 1. PARÁMETROS CONFIGURABLES (VÍA SIDEBAR)
@@ -198,7 +229,7 @@ for dia in dias_semana:
     tiendas_h_144.extend(tiendas_por_hora)
 
 # ==========================================
-# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO CON REGLA DE SÁBADO LIBRE Y VOLCADO
+# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (PRODUCCIÓN AL FINALIZAR CADA HORA)
 # ==========================================
 stock_actual = float(stock_inicio_lunes)  
 demanda_acumulada = 0
@@ -226,6 +257,7 @@ for t in range(144):
     demanda_acumulada += dem_h
     demanda_acum_144.append(demanda_acumulada)
     
+    # 1. Se descuenta la demanda ocurrida durante la hora actual
     stock_actual -= dem_h
     if stock_actual < 0:
         stock_actual = 0  
@@ -250,7 +282,6 @@ for t in range(144):
             motivo = "PLAYA LLENA"
         elif dia_actual == "Sábado":
             prod_h = min(vel_maquina, espacio_libre_playa)
-            stock_actual += prod_h
             motivo = "PRODUCIENDO" if prod_h > 0 else "PLAYA LLENA"
         else:
             pedidos_pendientes_fabricar = demanda_volcada_hasta_t - produccion_acumulada
@@ -258,12 +289,16 @@ for t in range(144):
                 motivo = "PENDIENTE VOLCADO (SIN PEDIDOS)"
             else:
                 prod_h = min(vel_maquina, espacio_libre_playa, max(0.0, pedidos_pendientes_fabricar))
-                stock_actual += prod_h
                 motivo = "PRODUCIENDO" if prod_h > 0 else "SIN TRABAJO"
     else:
         motivo = "FUERA DE HORARIO"
 
     produccion_acumulada += prod_h
+
+    # 2. La producción completada en esta hora se incorpora al stock al finalizar la misma
+    stock_actual += prod_h
+    if stock_actual > CAPACIDAD_PLAYA:
+        stock_actual = CAPACIDAD_PLAYA
 
     if hora_del_dia == 23 and corregir_cierres_por_dia.get(dia_actual, False):
         stock_real_objetivo = float(stocks_reales_cierre.get(dia_actual, stock_actual))
@@ -279,7 +314,6 @@ for t in range(144):
     horas_adelanto = int(round(stock_actual / vel_maquina)) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
 
-    # Cálculo exacto de día y hora que se están preparando con el stock actual
     cursor_sim = t
     if stock_actual > 0:
         stock_temp = stock_actual
@@ -313,7 +347,7 @@ for t in range(144):
         tiendas_en_playa_144.append(0)
 
 # ==========================================
-# 4. CONSTRUCCIÓN DE DATOS E HITOS (CON PREPARANDO EN RECUADRO FIN)
+# 4. CONSTRUCCIÓN DE DATOS E HITOS
 # ==========================================
 df_completo_ajustado = []
 hitos_produccion = []
@@ -427,7 +461,7 @@ fig = make_subplots(
     vertical_spacing=0.06,
     row_heights=[0.50, 0.25, 0.25],
     subplot_titles=(
-        f"OPM GUADIX - Control por Horarios (Playa: {CAPACIDAD_PLAYA:,.0f} picks)",
+        f"OPM ({escenario_seleccionado}) - Control por Horarios (Playa: {CAPACIDAD_PLAYA:,.0f} picks)",
         "Evolución del Stock Exacto en Playa (Picks)",
         "Horas de Adelanto / Autonomía en Playa (Horas)",
     ),
