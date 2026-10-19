@@ -201,11 +201,10 @@ stock_playa_144 = []
 adelanto_horas_144 = []
 produccion_efectiva_144 = []
 ultima_tienda_preparada_144 = []
+idx_preparando_144 = []
 tiendas_en_playa_144 = []
 cierres_ajustados_144 = [False] * 144
 motivos_estado_144 = []
-
-ultimo_texto_tienda = "Lun 00:00"
 
 for t in range(144):
     dia_idx = t // 24
@@ -272,9 +271,10 @@ for t in range(144):
     horas_adelanto = int(round(stock_actual / vel_maquina)) if vel_maquina > 0 else 0
     adelanto_horas_144.append(horas_adelanto)
 
+    # Cálculo exacto del índice futuro cubierto por el stock de playa
+    cursor_sim = t
     if stock_actual > 0:
         stock_temp = stock_actual
-        cursor_sim = t
         while cursor_sim < 143 and stock_temp > 0:
             cursor_sim += 1
             dem_futura = demanda_h_144[cursor_sim]
@@ -282,11 +282,17 @@ for t in range(144):
                 stock_temp -= dem_futura
             else:
                 break
-        d_fin = dias_semana[cursor_sim // 24][:3]
+        
+        d_fin_str = dias_semana[cursor_sim // 24][:3]
         h_fin_str = horas_24[cursor_sim % 24]
-        ultimo_texto_tienda = f"{d_fin} {h_fin_str}"
-    
+        ultimo_texto_tienda = f"{d_fin_str} {h_fin_str}"
+    else:
+        d_fin_str = dias_semana[t // 24][:3]
+        h_fin_str = horas_24[t % 24]
+        ultimo_texto_tienda = f"{d_fin_str} {h_fin_str}"
+
     ultima_tienda_preparada_144.append(ultimo_texto_tienda)
+    idx_preparando_144.append(cursor_sim)
 
     dem_dia_actual = demanda_servicio_por_dia[dia_actual]
     tiendas_dia_total = sum(tiendas_por_hora)
@@ -316,6 +322,7 @@ for dia_idx, dia in enumerate(dias_semana):
     stock_playa_dia = stock_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
     adelanto_dia = adelanto_horas_144[dia_idx * 24 : (dia_idx + 1) * 24]
     ult_tienda_dia = ultima_tienda_preparada_144[dia_idx * 24 : (dia_idx + 1) * 24]
+    idx_prep_dia = idx_preparando_144[dia_idx * 24 : (dia_idx + 1) * 24]
     tiendas_playa_dia = tiendas_en_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
     ajustes_dia = cierres_ajustados_144[dia_idx * 24 : (dia_idx + 1) * 24]
     motivos_dia = motivos_estado_144[dia_idx * 24 : (dia_idx + 1) * 24]
@@ -395,6 +402,7 @@ for dia_idx, dia in enumerate(dias_semana):
             "Stock_Playa": stock_actual_h,
             "Horas Adelanto": adelanto_dia[h_idx],
             "Preparando Por": ult_tienda_dia[h_idx],
+            "Idx_Preparando": idx_prep_dia[h_idx],
             "Tiendas_En_Playa": tiendas_playa_dia[h_idx],
             "Estado": motivos_dia[h_idx],
         })
@@ -402,7 +410,7 @@ for dia_idx, dia in enumerate(dias_semana):
 df_plot = pd.DataFrame(df_completo_ajustado)
 
 # ==========================================
-# 5. GRÁFICO PLOTLY (3 FILAS) CON LÍNEA VERTICAL AZUL DE PREPARACIÓN
+# 5. GRÁFICO PLOTLY (3 FILAS)
 # ==========================================
 fig = make_subplots(
     rows=3,
@@ -422,20 +430,21 @@ fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Produ
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Stock_Playa"], name="Stock en Playa (Picks)", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
 fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Horas Adelanto"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), fill='tozeroy', hoverinfo="skip"), row=3, col=1)
 
-# --- LÍNEA VERTICAL AZUL INDICADORA DE HORIZONTE DE PREPARACIÓN ---
+# --- LÍNEA VERTICAL AZUL EN LA ÚLTIMA HORA CUBIERTA POR EL STOCK DE PLAYA ---
 try:
-    hora_preparando = df_plot["Preparando Por"].iloc[-1]
-    if hora_preparando in df_plot["Eje_X"].values:
-        fig.add_vline(
-            x=hora_preparando,
-            line_dash="dash",
-            line_color="#1f77b4",
-            line_width=2.5,
-            annotation_text=f"📍 Preparando: {hora_preparando}",
-            annotation_position="top right",
-            annotation_font=dict(color="#1f77b4", size=10, family="sans-serif"),
-            row=1, col=1
-        )
+    pos_idx = int(df_plot["Idx_Preparando"].iloc[-1])
+    eje_x_linea_azul = df_plot["Eje_X"].iloc[pos_idx]
+    
+    fig.add_vline(
+        x=eje_x_linea_azul,
+        line_dash="dash",
+        line_color="#0b5ed7",
+        line_width=2.5,
+        annotation_text=f"📍 Preparando: {eje_x_linea_azul}",
+        annotation_position="top right",
+        annotation_font=dict(color="#0b5ed7", size=11, family="sans-serif"),
+        row=1, col=1
+    )
 except Exception:
     pass
 
