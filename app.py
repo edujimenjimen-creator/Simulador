@@ -2,12 +2,14 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
+
 from datetime import date, datetime, time, timedelta
 from contextlib import closing
 
-# ==================================================
+
+# ==========================================================
 # CONFIGURACIÓN
-# ==================================================
+# ==========================================================
 
 st.set_page_config(
     page_title="Gestión de Almacén",
@@ -23,9 +25,9 @@ NOMBRES = [
 ]
 
 
-# ==================================================
+# ==========================================================
 # BASE DE DATOS
-# ==================================================
+# ==========================================================
 
 def conectar():
     return sqlite3.connect(DB)
@@ -44,23 +46,19 @@ def crear_base_datos():
             """)
 
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS ajustes_pendientes (
-                    fecha_hora TEXT PRIMARY KEY,
-                    pendientes INTEGER DEFAULT 0
-                )
-            """)
-
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS asignaciones_servicio (
-                    fecha_hora TEXT PRIMARY KEY,
-                    fecha_servicio TEXT NOT NULL
-                )
-            """)
-
-            conn.execute("""
                 CREATE TABLE IF NOT EXISTS configuracion (
                     clave TEXT PRIMARY KEY,
                     valor INTEGER
+                )
+            """)
+
+            # Ajustes manuales de la planificación.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS ajustes_planificacion (
+                    fecha_hora TEXT NOT NULL,
+                    fecha_servicio TEXT NOT NULL,
+                    pendientes INTEGER NOT NULL,
+                    PRIMARY KEY (fecha_hora, fecha_servicio)
                 )
             """)
 
@@ -116,7 +114,6 @@ def guardar_configuracion(clave, valor):
 
 
 def guardar_productividad():
-
     guardar_configuracion(
         "productividad",
         st.session_state.productividad
@@ -127,35 +124,21 @@ def obtener_ajustes():
 
     with closing(conectar()) as conn:
         filas = conn.execute("""
-            SELECT fecha_hora, pendientes
-            FROM ajustes_pendientes
+            SELECT fecha_hora, fecha_servicio, pendientes
+            FROM ajustes_planificacion
         """).fetchall()
 
     return {
-        fecha_hora: int(pendientes)
-        for fecha_hora, pendientes in filas
+        (fecha_hora, fecha_servicio): int(pendientes)
+        for fecha_hora, fecha_servicio, pendientes in filas
     }
 
 
-def obtener_asignaciones():
+# ==========================================================
+# GUARDAR EDICIONES MANUALES
+# ==========================================================
 
-    with closing(conectar()) as conn:
-        filas = conn.execute("""
-            SELECT fecha_hora, fecha_servicio
-            FROM asignaciones_servicio
-        """).fetchall()
-
-    return {
-        fecha_hora: fecha_servicio
-        for fecha_hora, fecha_servicio in filas
-    }
-
-
-# ==================================================
-# GUARDAR CAMBIOS DE LA TABLA
-# ==================================================
-
-def guardar_ediciones_pendientes(editor_key):
+def guardar_ediciones(editor_key):
 
     estado = st.session_state.get(editor_key, {})
     cambios = estado.get("edited_rows", {})
@@ -163,86 +146,60 @@ def guardar_ediciones_pendientes(editor_key):
     if not cambios:
         return
 
-    fechas_filas = st.session_state.get(
-        f"{editor_key}_fechas",
+    referencias = st.session_state.get(
+        f"{editor_key}_referencias",
         []
     )
-
-    filas_cambiadas = []
-
-    for indice, valores in cambios.items():
-
-        filas_cambiadas.append((
-            int(indice),
-            valores
-        ))
-
-    filas_cambiadas.sort(key=lambda x: x[0])
 
     with closing(conectar()) as conn:
 
         with conn:
 
-            for indice, valores in filas_cambiadas:
+            for indice, valores in cambios.items():
 
-                if indice >= len(fechas_filas):
+                if "Picks restantes" not in valores:
                     continue
 
-                fecha_hora = fechas_filas[indice]
-                fecha = fecha_hora[:10]
+                indice = int(indice)
 
-                # Cambio del día de servicio.
-                if "Día de servicio" in valores:
+                if indice >= len(referencias):
+                    continue
 
-                    nuevo_servicio = valores["Día de servicio"]
+                referencia = referencias[indice]
 
-                    conn.execute("""
-                        INSERT INTO asignaciones_servicio (
-                            fecha_hora,
-                            fecha_servicio
-                        )
-                        VALUES (?, ?)
-                        ON CONFLICT(fecha_hora)
-                        DO UPDATE SET
-                        fecha_servicio=excluded.fecha_servicio
-                    """, (fecha_hora, nuevo_servicio))
+                # Solo permitimos ajustes en filas de trabajo.
+                if referencia["tipo"] == "Fin de servicio":
+                    continue
 
-                    # Eliminar ajustes posteriores de ese mismo
-                    # servicio para permitir su recálculo.
-                    conn.execute("""
-                        DELETE FROM ajustes_pendientes
-                        WHERE fecha_hora > ?
-                        AND fecha_hora IN (
-                            SELECT fecha_hora
-                            FROM asignaciones_servicio
-                            WHERE fecha_servicio = ?
-                        )
-                    """, (fecha_hora, nuevo_servicio))
+                fecha_hora = referencia["fecha_hora"]
+                fecha_servicio = referencia["fecha_servicio"]
 
-                # Cambio manual de picks restantes.
-                if "Picks restantes" in valores:
+                pendientes = max(
+                    0,
+                    int(valores["Picks restantes"])
+                )
 
-                    nuevo_valor = int(
-                        valores["Picks restantes"]
+                conn.execute("""
+                    INSERT INTO ajustes_planificacion (
+                        fecha_hora,
+                        fecha_servicio,
+                        pendientes
                     )
-
-                    conn.execute("""
-                        INSERT INTO ajustes_pendientes (
-                            fecha_hora,
-                            pendientes
-                        )
-                        VALUES (?, ?)
-                        ON CONFLICT(fecha_hora)
-                        DO UPDATE SET
-                        pendientes=excluded.pendientes
-                    """, (fecha_hora, nuevo_valor))
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(fecha_hora, fecha_servicio)
+                    DO UPDATE SET pendientes=excluded.pendientes
+                """, (
+                    fecha_hora,
+                    fecha_servicio,
+                    pendientes
+                ))
 
     st.session_state.version_tabla += 1
 
 
-# ==================================================
+# ==========================================================
 # INICIALIZACIÓN
-# ==================================================
+# ==========================================================
 
 crear_base_datos()
 
@@ -250,8 +207,8 @@ if "semana" not in st.session_state:
 
     hoy = date.today()
 
-    st.session_state.semana = hoy - timedelta(
-        days=hoy.weekday()
+    st.session_state.semana = (
+        hoy - timedelta(days=hoy.weekday())
     )
 
 if "version_tabla" not in st.session_state:
@@ -261,13 +218,13 @@ if "productividad" not in st.session_state:
 
     st.session_state.productividad = obtener_configuracion(
         "productividad",
-        3000
+        3500
     )
 
 
-# ==================================================
+# ==========================================================
 # ESTILO
-# ==================================================
+# ==========================================================
 
 st.markdown("""
 <style>
@@ -313,9 +270,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ==================================================
-# SIDEBAR: SEMANA DE SERVICIO
-# ==================================================
+# ==========================================================
+# SIDEBAR
+# ==========================================================
 
 st.sidebar.title("📦 ALMACÉN")
 st.sidebar.caption("Panel de control")
@@ -340,16 +297,16 @@ dias = [
 ]
 
 
-# ==================================================
+# ==========================================================
 # PICKS POR SERVICIO
-# ==================================================
+# ==========================================================
 
 with st.sidebar.expander(
     "📋 PICKS POR SERVICIO",
     expanded=False
 ):
 
-    st.caption("Picks previstos de cada día.")
+    st.caption("Picks totales de cada servicio.")
 
     for i, dia in enumerate(dias):
 
@@ -370,9 +327,9 @@ with st.sidebar.expander(
         )
 
 
-# ==================================================
+# ==========================================================
 # PRODUCTIVIDAD
-# ==================================================
+# ==========================================================
 
 st.sidebar.subheader("⚙️ PRODUCTIVIDAD")
 
@@ -388,13 +345,169 @@ st.sidebar.slider(
 productividad = int(st.session_state.productividad)
 
 st.sidebar.caption(
-    f"Productividad actual: {productividad:,} picks/h"
+    f"Productividad: {productividad:,} picks/h"
 )
 
 
-# ==================================================
-# CABECERA CENTRAL
-# ==================================================
+# ==========================================================
+# GENERADOR DE PLANIFICACIÓN CONSECUTIVA
+# ==========================================================
+
+def calcular_planificacion(inicio, final, productividad):
+
+    ajustes = obtener_ajustes()
+
+    registros = []
+
+    cursor = inicio
+    dia_servicio = inicio.date()
+
+    # Evita bucles si hay muchos servicios con cero picks.
+    limite_servicios = 1000
+    servicios_procesados = 0
+
+    while cursor <= final and servicios_procesados < limite_servicios:
+
+        fecha_servicio = dia_servicio.isoformat()
+
+        # Cada servicio comienza con sus picks totales.
+        saldo = float(obtener_servicio(fecha_servicio))
+
+        # Ajuste manual en el inicio, si existe.
+        clave_ajuste = (
+            cursor.strftime("%Y-%m-%d %H:%M:%S"),
+            fecha_servicio
+        )
+
+        if clave_ajuste in ajustes:
+            saldo = float(ajustes[clave_ajuste])
+
+        registros.append({
+            "Fecha y hora": cursor,
+            "Día de servicio": dia_servicio.strftime("%d/%m/%Y"),
+            "Picks restantes": int(round(saldo)),
+            "Estado": "Inicio de servicio"
+        })
+
+        # Si el servicio no tiene picks, termina inmediatamente.
+        if saldo <= 0:
+
+            registros.append({
+                "Fecha y hora": cursor,
+                "Día de servicio": dia_servicio.strftime("%d/%m/%Y"),
+                "Picks restantes": 0,
+                "Estado": "Fin de servicio"
+            })
+
+            dia_servicio += timedelta(days=1)
+            servicios_procesados += 1
+            continue
+
+        servicio_terminado = False
+
+        while cursor < final and saldo > 0:
+
+            # Próxima hora completa.
+            siguiente_hora = (
+                cursor.replace(
+                    minute=0,
+                    second=0,
+                    microsecond=0
+                ) + timedelta(hours=1)
+            )
+
+            # Tiempo necesario para terminar el servicio.
+            segundos_necesarios = (
+                saldo / productividad
+            ) * 3600
+
+            hora_fin_servicio = (
+                cursor + timedelta(seconds=segundos_necesarios)
+            )
+
+            # El siguiente evento puede ser:
+            # - Una hora completa.
+            # - El final del servicio.
+            # - El final del intervalo consultado.
+            siguiente_evento = min(
+                siguiente_hora,
+                hora_fin_servicio,
+                final
+            )
+
+            segundos = (
+                siguiente_evento - cursor
+            ).total_seconds()
+
+            picks_procesados = (
+                productividad * segundos / 3600
+            )
+
+            saldo = max(
+                0.0,
+                saldo - picks_procesados
+            )
+
+            cursor = siguiente_evento
+
+            # El servicio ha terminado.
+            if saldo <= 0.000001:
+
+                saldo = 0
+
+                registros.append({
+                    "Fecha y hora": cursor,
+                    "Día de servicio": dia_servicio.strftime("%d/%m/%Y"),
+                    "Picks restantes": 0,
+                    "Estado": "Fin de servicio"
+                })
+
+                servicio_terminado = True
+                break
+
+            # Si hemos llegado al final del intervalo.
+            if cursor >= final:
+
+                registros.append({
+                    "Fecha y hora": cursor,
+                    "Día de servicio": dia_servicio.strftime("%d/%m/%Y"),
+                    "Picks restantes": int(round(saldo)),
+                    "Estado": "En curso"
+                })
+
+                break
+
+            # Aplicar un posible ajuste manual en esta hora.
+            clave_ajuste = (
+                cursor.strftime("%Y-%m-%d %H:%M:%S"),
+                fecha_servicio
+            )
+
+            if clave_ajuste in ajustes:
+                saldo = float(ajustes[clave_ajuste])
+
+            registros.append({
+                "Fecha y hora": cursor,
+                "Día de servicio": dia_servicio.strftime("%d/%m/%Y"),
+                "Picks restantes": int(round(saldo)),
+                "Estado": "En curso"
+            })
+
+        if servicio_terminado:
+
+            # El siguiente servicio comienza inmediatamente.
+            dia_servicio += timedelta(days=1)
+            servicios_procesados += 1
+
+        else:
+            break
+
+    return pd.DataFrame(registros)
+
+
+# ==========================================================
+# PANTALLA PRINCIPAL
+# ==========================================================
 
 st.title("📦 Gestión de almacén")
 
@@ -408,9 +521,9 @@ st.divider()
 st.header("📊 Previsión de picks restantes")
 
 
-# ==================================================
+# ==========================================================
 # FILTROS CENTRALES
-# ==================================================
+# ==========================================================
 
 st.markdown("### 🗓️ Seleccionar intervalo de consulta")
 
@@ -434,8 +547,7 @@ with col2:
 
     hora_inicio = st.time_input(
         "Hora inicio",
-        value=time(0, 0),
-        step=timedelta(hours=1),
+        value=time(22, 0),
         key="filtro_hora_inicio",
         label_visibility="collapsed"
     )
@@ -459,7 +571,6 @@ with col4:
     hora_final = st.time_input(
         "Hora fin",
         value=time(23, 0),
-        step=timedelta(hours=1),
         key="filtro_hora_final",
         label_visibility="collapsed"
     )
@@ -467,91 +578,9 @@ with col4:
 st.divider()
 
 
-# ==================================================
-# CÁLCULO DE PLANIFICACIÓN
-# ==================================================
-
-def calcular_planificacion(
-    fecha_inicio,
-    fecha_final,
-    productividad
-):
-
-    ajustes = obtener_ajustes()
-    asignaciones = obtener_asignaciones()
-
-    registros = []
-
-    # Saldo independiente para cada día de servicio.
-    saldos = {}
-
-    dia = fecha_inicio
-
-    while dia <= fecha_final:
-
-        for hora in range(24):
-
-            fecha_hora_dt = datetime.combine(
-                dia,
-                time(hour=hora)
-            )
-
-            fecha_hora = fecha_hora_dt.strftime(
-                "%Y-%m-%d %H:%M"
-            )
-
-            # Si no existe asignación manual,
-            # se utiliza el día natural de la fecha y hora.
-            dia_servicio = asignaciones.get(
-                fecha_hora,
-                dia.isoformat()
-            )
-
-            # Obtener los picks totales de ese servicio.
-            if dia_servicio not in saldos:
-
-                saldos[dia_servicio] = obtener_servicio(
-                    dia_servicio
-                )
-
-            # Si hay un ajuste manual, prevalece.
-            if fecha_hora in ajustes:
-
-                saldos[dia_servicio] = ajustes[fecha_hora]
-
-            else:
-
-                # La primera hora asignada a un servicio
-                # muestra el total inicial.
-                # Las siguientes descuentan productividad.
-                ya_iniciado = any(
-                    registro["Día de servicio"] == dia_servicio
-                    for registro in registros
-                )
-
-                if ya_iniciado:
-
-                    saldos[dia_servicio] = max(
-                        saldos[dia_servicio] - productividad,
-                        0
-                    )
-
-            registros.append({
-                "Fecha y hora": fecha_hora_dt,
-                "Día de servicio": dia_servicio,
-                "Picks restantes": int(
-                    saldos[dia_servicio]
-                )
-            })
-
-        dia += timedelta(days=1)
-
-    return pd.DataFrame(registros)
-
-
-# ==================================================
-# GENERAR TABLA
-# ==================================================
+# ==========================================================
+# TABLA
+# ==========================================================
 
 inicio = datetime.combine(
     fecha_inicio,
@@ -563,84 +592,61 @@ final = datetime.combine(
     hora_final
 )
 
-if inicio > final:
+if inicio >= final:
 
     st.error(
-        "La fecha y hora de inicio no pueden ser posteriores "
-        "a la fecha y hora de fin."
+        "La fecha y hora final deben ser posteriores "
+        "a la fecha y hora inicial."
     )
 
 else:
 
     tabla_completa = calcular_planificacion(
-        fecha_inicio,
-        fecha_final,
+        inicio,
+        final,
         productividad
     )
 
-    # Filtrar el intervalo exacto.
-    tabla = tabla_completa[
-        (tabla_completa["Fecha y hora"] >= inicio) &
-        (tabla_completa["Fecha y hora"] <= final)
-    ].copy().reset_index(drop=True)
+    if tabla_completa.empty:
 
-    if tabla.empty:
-
-        st.warning(
-            "No hay registros dentro del intervalo seleccionado."
-        )
+        st.warning("No hay datos para mostrar.")
 
     else:
 
-        # Fechas reales para guardar los cambios.
-        fechas_editor = [
-            valor.strftime("%Y-%m-%d %H:%M")
-            for valor in tabla["Fecha y hora"]
-        ]
+        tabla = tabla_completa.copy()
 
-        # Opciones de días de servicio disponibles.
-        opciones_servicio = []
+        # Crear referencias internas para las ediciones.
+        referencias = []
 
-        dia_opcion = fecha_inicio
+        for _, fila in tabla.iterrows():
 
-        while dia_opcion <= fecha_final:
+            referencias.append({
+                "fecha_hora": fila["Fecha y hora"].strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+                "fecha_servicio": datetime.strptime(
+                    fila["Día de servicio"],
+                    "%d/%m/%Y"
+                ).strftime("%Y-%m-%d"),
+                "tipo": fila["Estado"]
+            })
 
-            opciones_servicio.append(
-                dia_opcion.isoformat()
-            )
-
-            dia_opcion += timedelta(days=1)
-
-        # Mostrar fechas en formato español.
         tabla["Fecha y hora"] = tabla[
             "Fecha y hora"
-        ].dt.strftime("%d/%m/%Y %H:%M")
-
-        tabla["Día de servicio"] = tabla[
-            "Día de servicio"
-        ].apply(
-            lambda x: datetime.strptime(
-                x, "%Y-%m-%d"
-            ).strftime("%d/%m/%Y")
-        )
-
-        # Las opciones del desplegable también en formato español.
-        opciones_visibles = [
-            datetime.strptime(
-                x, "%Y-%m-%d"
-            ).strftime("%d/%m/%Y")
-            for x in opciones_servicio
-        ]
+        ].dt.strftime("%d/%m/%Y %H:%M:%S")
 
         editor_key = (
             f"tabla_planificacion_{st.session_state.version_tabla}"
         )
 
-        st.session_state[f"{editor_key}_fechas"] = fechas_editor
+        st.session_state[
+            f"{editor_key}_referencias"
+        ] = referencias
 
         st.markdown(
-            "Puedes cambiar el **Día de servicio** de cada hora "
-            "y los picks se descontarán de ese servicio."
+            "Los servicios se preparan consecutivamente. "
+            "El siguiente comienza automáticamente cuando el anterior "
+            "llega a cero."
         )
 
         st.data_editor(
@@ -649,9 +655,13 @@ else:
             hide_index=True,
             height=650,
             key=editor_key,
-            on_change=guardar_ediciones_pendientes,
+            on_change=guardar_ediciones,
             args=(editor_key,),
-            disabled=["Fecha y hora"],
+            disabled=[
+                "Fecha y hora",
+                "Día de servicio",
+                "Estado"
+            ],
             column_config={
 
                 "Fecha y hora": st.column_config.TextColumn(
@@ -659,10 +669,8 @@ else:
                     width="medium"
                 ),
 
-                "Día de servicio": st.column_config.SelectboxColumn(
+                "Día de servicio": st.column_config.TextColumn(
                     "Día de servicio",
-                    options=opciones_visibles,
-                    required=True,
                     width="medium"
                 ),
 
@@ -673,30 +681,35 @@ else:
                     step=1,
                     format="%d",
                     width="medium"
+                ),
+
+                "Estado": st.column_config.TextColumn(
+                    "Estado",
+                    width="medium"
                 )
             }
         )
 
 
-# ==================================================
+# ==========================================================
 # RESUMEN
-# ==================================================
+# ==========================================================
 
 st.divider()
 
 col1, col2 = st.columns(2)
 
 col1.metric(
-    "Productividad configurada",
+    "Productividad",
     f"{productividad:,} picks/h"
 )
 
 col2.metric(
-    "Días consultados",
+    "Días de consulta",
     (fecha_final - fecha_inicio).days + 1
 )
 
 st.caption(
-    "Las asignaciones de días de servicio y los ajustes manuales "
-    "se guardan en la base de datos."
+    "La hora de finalización se calcula según los picks pendientes "
+    "y la productividad configurada. Los ajustes manuales se guardan."
 )
