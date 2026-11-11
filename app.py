@@ -143,6 +143,60 @@ def guardar_ajuste(fecha_hora, pendientes):
             """, (fecha_hora, pendientes))
 
 
+# ==================================================
+# GUARDADO AUTOMÁTICO DE CELDAS
+# ==================================================
+
+def guardar_ediciones_pendientes():
+
+    estado = st.session_state.get(
+        "tabla_planificacion", {}
+    )
+
+    ediciones = estado.get("edited_rows", {})
+
+    mapa_filas = st.session_state.get(
+        "mapa_filas_planificacion", {}
+    )
+
+    cambios = 0
+
+    for indice, valores in ediciones.items():
+
+        if "Picks restantes" not in valores:
+            continue
+
+        indice = int(indice)
+
+        fecha_hora = mapa_filas.get(indice)
+
+        if fecha_hora is None:
+            continue
+
+        nuevo_valor = int(
+            valores["Picks restantes"]
+        )
+
+        guardar_ajuste(
+            fecha_hora,
+            nuevo_valor
+        )
+
+        cambios += 1
+
+    if cambios:
+        st.session_state["mensaje_guardado"] = (
+            f"Se han guardado automáticamente {cambios} cambios."
+        )
+
+    # Limpiamos los cambios temporales del editor.
+    # La tabla se reconstruirá con los nuevos saldos.
+    st.session_state.pop(
+        "tabla_planificacion",
+        None
+    )
+
+
 crear_base_datos()
 
 # ==================================================
@@ -239,6 +293,7 @@ with st.sidebar.expander(
     st.caption("Picks totales previstos de cada día.")
 
     for dia in dias:
+
         fecha = dia.isoformat()
         clave = f"servicio_{fecha}"
 
@@ -276,14 +331,17 @@ productividad = st.sidebar.slider(
     key="productividad"
 )
 
-guardar_configuracion("productividad", productividad)
+guardar_configuracion(
+    "productividad",
+    productividad
+)
 
 st.sidebar.metric(
     "Productividad establecida",
     f"{productividad:,} picks/h"
 )
 
-st.sidebar.caption("Gestión de almacén | Versión 2.4")
+st.sidebar.caption("Gestión de almacén | Versión 2.5")
 
 # ==================================================
 # CABECERA
@@ -362,8 +420,8 @@ if fin < inicio:
 
 ajustes = obtener_ajustes()
 
-# Empezamos desde las 00:00 del primer día seleccionado
-# para calcular correctamente las horas anteriores al inicio.
+# Calculamos desde las 00:00 del primer día seleccionado.
+# Así se tienen en cuenta las horas anteriores al intervalo.
 
 momento = datetime.combine(
     inicio.date(),
@@ -384,18 +442,13 @@ while momento <= fin:
         "%Y-%m-%d %H:%M"
     )
 
-    # Al comenzar un nuevo día se carga el total
-    # de picks previsto para ese servicio.
-
+    # Al comenzar un nuevo día se carga el servicio diario.
     if fecha != fecha_anterior:
         saldo_dia = obtener_servicio(fecha_texto)
         fecha_anterior = fecha
 
-    # Restamos la productividad de cada hora.
-
+    # Si existe un ajuste manual, prevalece sobre el cálculo.
     if clave_momento in ajustes:
-        # Si has modificado manualmente esta hora,
-        # utilizamos tu cantidad como nuevo saldo.
         saldo_dia = int(ajustes[clave_momento])
     else:
         saldo_dia = max(
@@ -403,12 +456,12 @@ while momento <= fin:
             0
         )
 
-    # Guardamos las horas del intervalo solicitado.
-
     if inicio <= momento <= fin:
         registros.append({
             "fecha_hora": clave_momento,
-            "Fecha y hora": momento.strftime("%d/%m %H:%M"),
+            "Fecha y hora": momento.strftime(
+                "%d/%m %H:%M"
+            ),
             "Picks restantes": int(saldo_dia)
         })
 
@@ -425,20 +478,26 @@ if not registros:
 st.subheader("📊 PICKS RESTANTES")
 
 st.caption(
-    "Puedes modificar manualmente los picks restantes "
-    "de cualquier hora. Los cambios se guardan y sirven "
-    "como punto de partida para las horas posteriores."
+    "Modifica cualquier cantidad de picks restantes. "
+    "El cambio se guardará automáticamente y actualizará "
+    "las horas posteriores."
 )
 
-df = pd.DataFrame(registros)
+# Mapa que relaciona cada fila con su fecha y hora real.
+st.session_state["mapa_filas_planificacion"] = {
+    i: registro["fecha_hora"]
+    for i, registro in enumerate(registros)
+}
 
-valores_originales = df["Picks restantes"].tolist()
+tabla = pd.DataFrame([
+    {
+        "Fecha y hora": registro["Fecha y hora"],
+        "Picks restantes": registro["Picks restantes"]
+    }
+    for registro in registros
+])
 
-tabla = df[
-    ["Fecha y hora", "Picks restantes"]
-].copy()
-
-tabla_editada = st.data_editor(
+st.data_editor(
     tabla,
     use_container_width=True,
     hide_index=True,
@@ -455,52 +514,35 @@ tabla_editada = st.data_editor(
             max_value=1000000,
             step=100,
             format="%d",
-            help="Puedes modificar manualmente este valor."
+            help="Modifica esta cantidad para actualizar las horas siguientes."
         )
     },
-    key="tabla_planificacion"
+    key="tabla_planificacion",
+    on_change=guardar_ediciones_pendientes
 )
 
 # ==================================================
-# GUARDAR CAMBIOS
+# CONFIRMACIÓN DEL GUARDADO
 # ==================================================
 
-if st.button(
-    "💾 GUARDAR CAMBIOS",
-    type="primary",
-    use_container_width=True
-):
+if st.session_state.get("mensaje_guardado"):
+    st.success(
+        st.session_state.pop("mensaje_guardado")
+    )
 
-    cambios = 0
+# ==================================================
+# RESUMEN
+# ==================================================
 
-    for i, fila in tabla_editada.iterrows():
+st.divider()
 
-        nuevo_valor = int(fila["Picks restantes"])
-        valor_original = int(valores_originales[i])
+st.subheader("📌 Resumen del periodo")
 
-        if nuevo_valor != valor_original:
+ultimo_saldo = int(
+    registros[-1]["Picks restantes"]
+)
 
-            fecha_hora = df.iloc[i]["fecha_hora"]
-
-            guardar_ajuste(
-                fecha_hora,
-                nuevo_valor
-            )
-
-            cambios += 1
-
-    if cambios > 0:
-        st.success(
-            f"Se han guardado {cambios} cambios."
-        )
-
-        st.session_state.pop(
-            "tabla_planificacion",
-            None
-        )
-
-        st.rerun()
-
-    else:
-        st.info("No has realizado ningún cambio.")
-
+st.metric(
+    "Picks restantes al finalizar el periodo",
+    f"{ultimo_saldo:,}"
+)
