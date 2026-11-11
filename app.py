@@ -1,4 +1,3 @@
-
 import streamlit as st
 import sqlite3
 import pandas as pd
@@ -49,6 +48,17 @@ def crear_base_datos():
                 CREATE TABLE IF NOT EXISTS configuracion (
                     clave TEXT PRIMARY KEY,
                     valor INTEGER
+                )
+            """)
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS planificacion_congelada (
+                    fecha_hora TEXT NOT NULL,
+                    fecha_servicio TEXT NOT NULL,
+                    pendientes INTEGER NOT NULL,
+                    estado TEXT NOT NULL,
+                    origen TEXT NOT NULL,
+                    PRIMARY KEY (fecha_hora, fecha_servicio, estado)
                 )
             """)
 
@@ -112,12 +122,68 @@ def guardar_configuracion(clave, valor):
             """, (clave, int(valor)))
 
 
+def congelar_hasta_ultimo_manual():
+    """Guarda el tramo ya calculado hasta el último ajuste manual."""
+
+    tabla = st.session_state.get("plan_actual")
+
+    if tabla is None or tabla.empty:
+        return
+
+    manuales = tabla[tabla["Origen"] == "✏️ Manual"]
+
+    if manuales.empty:
+        return
+
+    corte = manuales["Fecha y hora"].max()
+    prefijo = tabla[tabla["Fecha y hora"] <= corte]
+
+    with closing(conectar()) as conn:
+        with conn:
+
+            for _, fila in prefijo.iterrows():
+
+                conn.execute("""
+                    INSERT INTO planificacion_congelada
+                    (fecha_hora, fecha_servicio, pendientes, estado, origen)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(fecha_hora, fecha_servicio, estado)
+                    DO UPDATE SET pendientes=excluded.pendientes,
+                                  origen=excluded.origen
+                """, (
+                    fila["Fecha y hora"].strftime("%Y-%m-%d %H:%M:%S"),
+                    datetime.strptime(
+                        fila["Día de servicio"], "%d/%m/%Y"
+                    ).date().isoformat(),
+                    int(fila["Picks restantes"]),
+                    fila["Estado"],
+                    fila["Origen"]
+                ))
+
+
 def guardar_productividad():
+
+    congelar_hasta_ultimo_manual()
 
     guardar_configuracion(
         "productividad",
         st.session_state.productividad
     )
+
+    st.session_state.version_tabla += 1
+
+
+def obtener_congelados():
+
+    with closing(conectar()) as conn:
+        filas = conn.execute("""
+            SELECT fecha_hora, fecha_servicio, pendientes, estado, origen
+            FROM planificacion_congelada
+            ORDER BY fecha_hora,
+            CASE estado WHEN 'Fin de servicio' THEN 0 ELSE 1 END
+        """).fetchall()
+
+    return filas
 
 
 def obtener_ajustes():
@@ -151,8 +217,7 @@ def guardar_ediciones(editor_key):
         []
     )
 
-    # El desplegable de la primera fila determina
-    # el primer día de servicio.
+    # El desplegable de la primera fila determina el primer servicio.
     if "0" in cambios or 0 in cambios:
 
         valores_primera_fila = cambios.get(
@@ -194,11 +259,7 @@ def guardar_ediciones(editor_key):
 
         fecha_hora = referencia["fecha_hora"]
         fecha_servicio = referencia["fecha_servicio"]
-
-        pendientes = max(
-            0,
-            int(valores["Picks restantes"])
-        )
+        pendientes = max(0, int(valores["Picks restantes"]))
 
         ediciones_picks.append((
             fecha_hora,
@@ -208,24 +269,26 @@ def guardar_ediciones(editor_key):
 
     if ediciones_picks:
 
-        # La edición más temprana es el nuevo punto manual.
+        # La edición más temprana es el nuevo punto de partida manual.
         ediciones_picks.sort(key=lambda x: x[0])
 
-        fecha_hora, fecha_servicio, pendientes = (
-            ediciones_picks[0]
-        )
+        fecha_hora, fecha_servicio, pendientes = ediciones_picks[0]
 
         with closing(conectar()) as conn:
             with conn:
 
-                # Borrar todos los ajustes desde ese instante.
-                # Así los valores posteriores se recalculan.
+                # Eliminar el tramo posterior al nuevo ajuste.
+                conn.execute("""
+                    DELETE FROM planificacion_congelada
+                    WHERE fecha_hora >= ?
+                """, (fecha_hora,))
+
                 conn.execute("""
                     DELETE FROM ajustes_planificacion
                     WHERE fecha_hora >= ?
                 """, (fecha_hora,))
 
-                # Guardar únicamente el nuevo punto manual.
+                # Guardar el nuevo punto manual.
                 conn.execute("""
                     INSERT INTO ajustes_planificacion (
                         fecha_hora,
@@ -241,7 +304,6 @@ def guardar_ediciones(editor_key):
                     pendientes
                 ))
 
-    # Forzar una tabla nueva.
     st.session_state.version_tabla += 1
 
 
@@ -405,149 +467,248 @@ def calcular_planificacion(
 ):
 
     ajustes = obtener_ajustes()
+    congelados = obtener_congelados()
 
     registros = []
 
-    cursor = inicio
-    dia_servicio = servicio_inicial
+    def agregar(
+        momento,
+        dia,
+        saldo,
+        estado,
+        origen="Automático"
+    ):
 
-    servicios_procesados = 0
-    limite = 1000
-
-    while cursor <= final and servicios_procesados < limite:
-
-        fecha_servicio = dia_servicio.isoformat()
-
-        # Cargar los picks totales del servicio.
-        saldo = float(
-            obtener_servicio(fecha_servicio)
-        )
-
-        clave_ajuste = (
-            cursor.strftime("%Y-%m-%d %H:%M:%S"),
-            fecha_servicio
-        )
-
-        if clave_ajuste in ajustes:
-            saldo = float(ajustes[clave_ajuste])
-
-        # Inicio del servicio.
-        registros.append({
-            "Fecha y hora": cursor,
-            "Día de servicio": dia_servicio.strftime("%d/%m/%Y"),
-            "Picks restantes": int(round(saldo)),
-            "Estado": "Inicio de servicio"
-        })
-
-        # Si no hay picks, termina inmediatamente.
-        if saldo <= 0:
+        if inicio <= momento <= final:
 
             registros.append({
-                "Fecha y hora": cursor,
-                "Día de servicio": dia_servicio.strftime("%d/%m/%Y"),
-                "Picks restantes": 0,
-                "Estado": "Fin de servicio"
+                "Fecha y hora": momento,
+                "Día de servicio": dia.strftime("%d/%m/%Y"),
+                "Picks restantes": max(0, int(round(saldo))),
+                "Estado": estado,
+                "Origen": origen,
             })
 
+    # Buscar el último punto manual.
+    anclas = []
+
+    for (momento, servicio), saldo in ajustes.items():
+
+        anclas.append((
+            datetime.strptime(
+                momento, "%Y-%m-%d %H:%M:%S"
+            ),
+            date.fromisoformat(servicio),
+            saldo
+        ))
+
+    ancla = max(anclas, key=lambda x: x[0]) if anclas else None
+
+    if ancla:
+
+        corte, dia_servicio, saldo = ancla
+
+        # Recuperar el tramo congelado anterior al último ajuste.
+        for (
+            momento_txt,
+            servicio_txt,
+            pendientes,
+            estado,
+            origen
+        ) in congelados:
+
+            momento = datetime.strptime(
+                momento_txt, "%Y-%m-%d %H:%M:%S"
+            )
+
+            if momento <= corte:
+
+                agregar(
+                    momento,
+                    date.fromisoformat(servicio_txt),
+                    pendientes,
+                    estado,
+                    origen
+                )
+
+        # Añadir los puntos manuales previos que no estén congelados.
+        for (
+            (momento_txt, servicio_txt),
+            pendientes
+        ) in ajustes.items():
+
+            momento = datetime.strptime(
+                momento_txt, "%Y-%m-%d %H:%M:%S"
+            )
+
+            if momento <= corte and not any(
+                r["Fecha y hora"] == momento
+                and r["Día de servicio"] ==
+                date.fromisoformat(servicio_txt).strftime("%d/%m/%Y")
+                for r in registros
+            ):
+
+                agregar(
+                    momento,
+                    date.fromisoformat(servicio_txt),
+                    pendientes,
+                    "En curso",
+                    "✏️ Manual"
+                )
+
+        # Asegurar que el último punto manual aparece.
+        if not any(
+            r["Fecha y hora"] == corte
+            and r["Día de servicio"] ==
+            dia_servicio.strftime("%d/%m/%Y")
+            for r in registros
+        ):
+
+            agregar(
+                corte,
+                dia_servicio,
+                saldo,
+                "En curso",
+                "✏️ Manual"
+            )
+
+        cursor = corte
+        saldo = float(saldo)
+        iniciado = True
+
+    else:
+
+        cursor = inicio
+        dia_servicio = servicio_inicial
+        saldo = float(
+            obtener_servicio(dia_servicio.isoformat())
+        )
+        iniciado = False
+
+    limite = 1000
+    procesados = 0
+
+    while cursor <= final and procesados < limite:
+
+        if not iniciado:
+
+            clave = (
+                cursor.strftime("%Y-%m-%d %H:%M:%S"),
+                dia_servicio.isoformat()
+            )
+
+            if clave in ajustes:
+                saldo = float(ajustes[clave])
+
+            agregar(
+                cursor,
+                dia_servicio,
+                saldo,
+                "Inicio de servicio",
+                "✏️ Manual" if clave in ajustes else "Automático"
+            )
+
+        iniciado = True
+
+        if saldo <= 0.000001:
+
+            agregar(
+                cursor,
+                dia_servicio,
+                0,
+                "Fin de servicio"
+            )
+
             dia_servicio += timedelta(days=1)
-            servicios_procesados += 1
+            procesados += 1
+
+            saldo = float(
+                obtener_servicio(dia_servicio.isoformat())
+            )
+
+            iniciado = False
             continue
 
-        terminado = False
-
-        while cursor < final and saldo > 0:
-
-            siguiente_hora = (
-                cursor.replace(
-                    minute=0,
-                    second=0,
-                    microsecond=0
-                ) + timedelta(hours=1)
-            )
-
-            segundos_necesarios = (
-                saldo / productividad
-            ) * 3600
-
-            hora_fin_servicio = (
-                cursor + timedelta(seconds=segundos_necesarios)
-            )
-
-            siguiente_evento = min(
-                siguiente_hora,
-                hora_fin_servicio,
-                final
-            )
-
-            segundos = (
-                siguiente_evento - cursor
-            ).total_seconds()
-
-            picks_procesados = (
-                productividad * segundos / 3600
-            )
-
-            saldo = max(
-                0.0,
-                saldo - picks_procesados
-            )
-
-            cursor = siguiente_evento
-
-            # Fin exacto del servicio.
-            if saldo <= 0.000001:
-
-                saldo = 0
-
-                registros.append({
-                    "Fecha y hora": cursor,
-                    "Día de servicio": dia_servicio.strftime("%d/%m/%Y"),
-                    "Picks restantes": 0,
-                    "Estado": "Fin de servicio"
-                })
-
-                terminado = True
-                break
-
-            # Aplicar cualquier ajuste manual guardado
-            # exactamente en este momento.
-            clave_ajuste = (
-                cursor.strftime("%Y-%m-%d %H:%M:%S"),
-                fecha_servicio
-            )
-
-            if clave_ajuste in ajustes:
-                saldo = float(ajustes[clave_ajuste])
-
-            # Fin del intervalo consultado.
-            if cursor >= final:
-
-                registros.append({
-                    "Fecha y hora": cursor,
-                    "Día de servicio": dia_servicio.strftime("%d/%m/%Y"),
-                    "Picks restantes": int(round(saldo)),
-                    "Estado": "En curso"
-                })
-
-                break
-
-            registros.append({
-                "Fecha y hora": cursor,
-                "Día de servicio": dia_servicio.strftime("%d/%m/%Y"),
-                "Picks restantes": int(round(saldo)),
-                "Estado": "En curso"
-            })
-
-        if terminado:
-
-            # El siguiente servicio empieza inmediatamente.
-            dia_servicio += timedelta(days=1)
-            servicios_procesados += 1
-
-        else:
+        if cursor >= final:
             break
 
-    return pd.DataFrame(registros)
+        siguiente_hora = (
+            cursor.replace(
+                minute=0,
+                second=0,
+                microsecond=0
+            ) + timedelta(hours=1)
+        )
+
+        hora_fin = cursor + timedelta(
+            seconds=saldo / productividad * 3600
+        )
+
+        siguiente = min(
+            siguiente_hora,
+            hora_fin,
+            final
+        )
+
+        saldo = max(
+            0.,
+            saldo - productividad *
+            (siguiente - cursor).total_seconds() / 3600
+        )
+
+        cursor = siguiente
+
+        if saldo <= 0.000001:
+
+            saldo = 0.
+
+            agregar(
+                cursor,
+                dia_servicio,
+                0,
+                "Fin de servicio"
+            )
+
+            dia_servicio += timedelta(days=1)
+            procesados += 1
+
+            saldo = float(
+                obtener_servicio(dia_servicio.isoformat())
+            )
+
+            iniciado = False
+            continue
+
+        clave = (
+            cursor.strftime("%Y-%m-%d %H:%M:%S"),
+            dia_servicio.isoformat()
+        )
+
+        origen = "Automático"
+
+        if clave in ajustes:
+
+            saldo = float(ajustes[clave])
+            origen = "✏️ Manual"
+
+        agregar(
+            cursor,
+            dia_servicio,
+            saldo,
+            "En curso",
+            origen
+        )
+
+    return pd.DataFrame(
+        registros,
+        columns=[
+            "Fecha y hora",
+            "Día de servicio",
+            "Picks restantes",
+            "Estado",
+            "Origen"
+        ]
+    )
 
 
 # ==========================================================
@@ -696,28 +857,14 @@ else:
                 "estado": fila["Estado"]
             })
 
-        # Identificar los ajustes manuales que siguen vigentes.
-        ajustes = obtener_ajustes()
+        indices_rojos = {
+            indice
+            for indice, origen in enumerate(tabla["Origen"])
+            if origen == "✏️ Manual"
+        }
 
-        indices_rojos = set()
-        origenes = []
-
-        for indice, referencia in enumerate(referencias):
-
-            clave = (
-                referencia["fecha_hora"],
-                referencia["fecha_servicio"]
-            )
-
-            es_manual = clave in ajustes
-
-            if es_manual:
-                indices_rojos.add(indice)
-                origenes.append("✏️ Manual")
-            else:
-                origenes.append("Automático")
-
-        tabla["Origen"] = origenes
+        # Guardar la instantánea antes de convertir fechas a texto.
+        st.session_state["plan_actual"] = tabla.copy(deep=True)
 
         tabla["Fecha y hora"] = tabla[
             "Fecha y hora"
