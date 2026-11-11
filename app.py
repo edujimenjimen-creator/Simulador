@@ -22,6 +22,7 @@ NOMBRES = [
     "Jueves", "Viernes", "Sábado"
 ]
 
+
 # ==================================================
 # BASE DE DATOS
 # ==================================================
@@ -31,8 +32,10 @@ def conectar():
 
 
 def crear_base_datos():
+
     with closing(conectar()) as conn:
         with conn:
+
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS servicios (
                     fecha TEXT PRIMARY KEY,
@@ -48,6 +51,13 @@ def crear_base_datos():
             """)
 
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS asignaciones_servicio (
+                    fecha_hora TEXT PRIMARY KEY,
+                    fecha_servicio TEXT NOT NULL
+                )
+            """)
+
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS configuracion (
                     clave TEXT PRIMARY KEY,
                     valor INTEGER
@@ -56,6 +66,7 @@ def crear_base_datos():
 
 
 def obtener_servicio(fecha):
+
     with closing(conectar()) as conn:
         resultado = conn.execute(
             "SELECT picks FROM servicios WHERE fecha=?",
@@ -66,6 +77,7 @@ def obtener_servicio(fecha):
 
 
 def guardar_servicio(fecha, picks):
+
     with closing(conectar()) as conn:
         with conn:
             conn.execute("""
@@ -81,6 +93,7 @@ def guardar_sidebar_servicio(fecha, clave):
 
 
 def obtener_configuracion(clave, defecto):
+
     with closing(conectar()) as conn:
         resultado = conn.execute(
             "SELECT valor FROM configuracion WHERE clave=?",
@@ -91,6 +104,7 @@ def obtener_configuracion(clave, defecto):
 
 
 def guardar_configuracion(clave, valor):
+
     with closing(conectar()) as conn:
         with conn:
             conn.execute("""
@@ -102,6 +116,7 @@ def guardar_configuracion(clave, valor):
 
 
 def guardar_productividad():
+
     guardar_configuracion(
         "productividad",
         st.session_state.productividad
@@ -109,11 +124,11 @@ def guardar_productividad():
 
 
 def obtener_ajustes():
+
     with closing(conectar()) as conn:
         filas = conn.execute("""
             SELECT fecha_hora, pendientes
             FROM ajustes_pendientes
-            ORDER BY fecha_hora
         """).fetchall()
 
     return {
@@ -122,8 +137,22 @@ def obtener_ajustes():
     }
 
 
+def obtener_asignaciones():
+
+    with closing(conectar()) as conn:
+        filas = conn.execute("""
+            SELECT fecha_hora, fecha_servicio
+            FROM asignaciones_servicio
+        """).fetchall()
+
+    return {
+        fecha_hora: fecha_servicio
+        for fecha_hora, fecha_servicio in filas
+    }
+
+
 # ==================================================
-# GUARDAR EDICIONES MANUALES
+# GUARDAR CAMBIOS DE LA TABLA
 # ==================================================
 
 def guardar_ediciones_pendientes(editor_key):
@@ -134,32 +163,27 @@ def guardar_ediciones_pendientes(editor_key):
     if not cambios:
         return
 
-    filas_cambiadas = []
-
-    for indice, valores in cambios.items():
-
-        if "Picks restantes" not in valores:
-            continue
-
-        filas_cambiadas.append((
-            int(indice),
-            int(valores["Picks restantes"])
-        ))
-
-    if not filas_cambiadas:
-        return
-
-    filas_cambiadas.sort(key=lambda x: x[0])
-
     fechas_filas = st.session_state.get(
         f"{editor_key}_fechas",
         []
     )
 
+    filas_cambiadas = []
+
+    for indice, valores in cambios.items():
+
+        filas_cambiadas.append((
+            int(indice),
+            valores
+        ))
+
+    filas_cambiadas.sort(key=lambda x: x[0])
+
     with closing(conectar()) as conn:
+
         with conn:
 
-            for indice, nuevo_valor in filas_cambiadas:
+            for indice, valores in filas_cambiadas:
 
                 if indice >= len(fechas_filas):
                     continue
@@ -167,23 +191,51 @@ def guardar_ediciones_pendientes(editor_key):
                 fecha_hora = fechas_filas[indice]
                 fecha = fecha_hora[:10]
 
-                # Eliminar los ajustes posteriores de ese día.
-                conn.execute("""
-                    DELETE FROM ajustes_pendientes
-                    WHERE substr(fecha_hora, 1, 10) = ?
-                    AND fecha_hora > ?
-                """, (fecha, fecha_hora))
+                # Cambio del día de servicio.
+                if "Día de servicio" in valores:
 
-                # Guardar el nuevo saldo manual.
-                conn.execute("""
-                    INSERT INTO ajustes_pendientes (
-                        fecha_hora,
-                        pendientes
+                    nuevo_servicio = valores["Día de servicio"]
+
+                    conn.execute("""
+                        INSERT INTO asignaciones_servicio (
+                            fecha_hora,
+                            fecha_servicio
+                        )
+                        VALUES (?, ?)
+                        ON CONFLICT(fecha_hora)
+                        DO UPDATE SET
+                        fecha_servicio=excluded.fecha_servicio
+                    """, (fecha_hora, nuevo_servicio))
+
+                    # Eliminar ajustes posteriores de ese mismo
+                    # servicio para permitir su recálculo.
+                    conn.execute("""
+                        DELETE FROM ajustes_pendientes
+                        WHERE fecha_hora > ?
+                        AND fecha_hora IN (
+                            SELECT fecha_hora
+                            FROM asignaciones_servicio
+                            WHERE fecha_servicio = ?
+                        )
+                    """, (fecha_hora, nuevo_servicio))
+
+                # Cambio manual de picks restantes.
+                if "Picks restantes" in valores:
+
+                    nuevo_valor = int(
+                        valores["Picks restantes"]
                     )
-                    VALUES (?, ?)
-                    ON CONFLICT(fecha_hora)
-                    DO UPDATE SET pendientes=excluded.pendientes
-                """, (fecha_hora, nuevo_valor))
+
+                    conn.execute("""
+                        INSERT INTO ajustes_pendientes (
+                            fecha_hora,
+                            pendientes
+                        )
+                        VALUES (?, ?)
+                        ON CONFLICT(fecha_hora)
+                        DO UPDATE SET
+                        pendientes=excluded.pendientes
+                    """, (fecha_hora, nuevo_valor))
 
     st.session_state.version_tabla += 1
 
@@ -195,7 +247,9 @@ def guardar_ediciones_pendientes(editor_key):
 crear_base_datos()
 
 if "semana" not in st.session_state:
+
     hoy = date.today()
+
     st.session_state.semana = hoy - timedelta(
         days=hoy.weekday()
     )
@@ -204,6 +258,7 @@ if "version_tabla" not in st.session_state:
     st.session_state.version_tabla = 0
 
 if "productividad" not in st.session_state:
+
     st.session_state.productividad = obtener_configuracion(
         "productividad",
         3000
@@ -338,56 +393,6 @@ st.sidebar.caption(
 
 
 # ==================================================
-# CÁLCULO DE LA PLANIFICACIÓN
-# ==================================================
-
-def calcular_planificacion(fecha_inicio, fecha_final, productividad):
-
-    ajustes = obtener_ajustes()
-    registros = []
-
-    dia = fecha_inicio
-
-    while dia <= fecha_final:
-
-        fecha = dia.isoformat()
-        saldo = obtener_servicio(fecha)
-
-        for hora in range(24):
-
-            fecha_hora_dt = datetime.combine(
-                dia,
-                time(hour=hora)
-            )
-
-            fecha_hora = fecha_hora_dt.strftime(
-                "%Y-%m-%d %H:%M"
-            )
-
-            if fecha_hora in ajustes:
-
-                # Aplicar saldo introducido manualmente.
-                saldo = ajustes[fecha_hora]
-
-            else:
-
-                # Descontar la productividad de esa hora.
-                saldo = max(
-                    saldo - productividad,
-                    0
-                )
-
-            registros.append({
-                "Fecha y hora": fecha_hora_dt,
-                "Picks restantes": int(saldo)
-            })
-
-        dia += timedelta(days=1)
-
-    return pd.DataFrame(registros)
-
-
-# ==================================================
 # CABECERA CENTRAL
 # ==================================================
 
@@ -412,7 +417,9 @@ st.markdown("### 🗓️ Seleccionar intervalo de consulta")
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
+
     st.markdown("**Fecha inicio**")
+
     fecha_inicio = st.date_input(
         "Fecha inicio",
         value=dias[0],
@@ -422,7 +429,9 @@ with col1:
     )
 
 with col2:
+
     st.markdown("**Hora inicio**")
+
     hora_inicio = st.time_input(
         "Hora inicio",
         value=time(0, 0),
@@ -432,7 +441,9 @@ with col2:
     )
 
 with col3:
+
     st.markdown("**Fecha fin**")
+
     fecha_final = st.date_input(
         "Fecha fin",
         value=dias[-1],
@@ -442,7 +453,9 @@ with col3:
     )
 
 with col4:
+
     st.markdown("**Hora fin**")
+
     hora_final = st.time_input(
         "Hora fin",
         value=time(23, 0),
@@ -455,7 +468,89 @@ st.divider()
 
 
 # ==================================================
-# TABLA
+# CÁLCULO DE PLANIFICACIÓN
+# ==================================================
+
+def calcular_planificacion(
+    fecha_inicio,
+    fecha_final,
+    productividad
+):
+
+    ajustes = obtener_ajustes()
+    asignaciones = obtener_asignaciones()
+
+    registros = []
+
+    # Saldo independiente para cada día de servicio.
+    saldos = {}
+
+    dia = fecha_inicio
+
+    while dia <= fecha_final:
+
+        for hora in range(24):
+
+            fecha_hora_dt = datetime.combine(
+                dia,
+                time(hour=hora)
+            )
+
+            fecha_hora = fecha_hora_dt.strftime(
+                "%Y-%m-%d %H:%M"
+            )
+
+            # Si no existe asignación manual,
+            # se utiliza el día natural de la fecha y hora.
+            dia_servicio = asignaciones.get(
+                fecha_hora,
+                dia.isoformat()
+            )
+
+            # Obtener los picks totales de ese servicio.
+            if dia_servicio not in saldos:
+
+                saldos[dia_servicio] = obtener_servicio(
+                    dia_servicio
+                )
+
+            # Si hay un ajuste manual, prevalece.
+            if fecha_hora in ajustes:
+
+                saldos[dia_servicio] = ajustes[fecha_hora]
+
+            else:
+
+                # La primera hora asignada a un servicio
+                # muestra el total inicial.
+                # Las siguientes descuentan productividad.
+                ya_iniciado = any(
+                    registro["Día de servicio"] == dia_servicio
+                    for registro in registros
+                )
+
+                if ya_iniciado:
+
+                    saldos[dia_servicio] = max(
+                        saldos[dia_servicio] - productividad,
+                        0
+                    )
+
+            registros.append({
+                "Fecha y hora": fecha_hora_dt,
+                "Día de servicio": dia_servicio,
+                "Picks restantes": int(
+                    saldos[dia_servicio]
+                )
+            })
+
+        dia += timedelta(days=1)
+
+    return pd.DataFrame(registros)
+
+
+# ==================================================
+# GENERAR TABLA
 # ==================================================
 
 inicio = datetime.combine(
@@ -477,14 +572,13 @@ if inicio > final:
 
 else:
 
-    # Calcular todas las horas de los días seleccionados.
     tabla_completa = calcular_planificacion(
         fecha_inicio,
         fecha_final,
         productividad
     )
 
-    # Filtrar el intervalo exacto solicitado.
+    # Filtrar el intervalo exacto.
     tabla = tabla_completa[
         (tabla_completa["Fecha y hora"] >= inicio) &
         (tabla_completa["Fecha y hora"] <= final)
@@ -498,21 +592,56 @@ else:
 
     else:
 
-        # Guardar las fechas reales antes de formatearlas.
+        # Fechas reales para guardar los cambios.
         fechas_editor = [
             valor.strftime("%Y-%m-%d %H:%M")
             for valor in tabla["Fecha y hora"]
         ]
 
+        # Opciones de días de servicio disponibles.
+        opciones_servicio = []
+
+        dia_opcion = fecha_inicio
+
+        while dia_opcion <= fecha_final:
+
+            opciones_servicio.append(
+                dia_opcion.isoformat()
+            )
+
+            dia_opcion += timedelta(days=1)
+
+        # Mostrar fechas en formato español.
         tabla["Fecha y hora"] = tabla[
             "Fecha y hora"
         ].dt.strftime("%d/%m/%Y %H:%M")
+
+        tabla["Día de servicio"] = tabla[
+            "Día de servicio"
+        ].apply(
+            lambda x: datetime.strptime(
+                x, "%Y-%m-%d"
+            ).strftime("%d/%m/%Y")
+        )
+
+        # Las opciones del desplegable también en formato español.
+        opciones_visibles = [
+            datetime.strptime(
+                x, "%Y-%m-%d"
+            ).strftime("%d/%m/%Y")
+            for x in opciones_servicio
+        ]
 
         editor_key = (
             f"tabla_planificacion_{st.session_state.version_tabla}"
         )
 
         st.session_state[f"{editor_key}_fechas"] = fechas_editor
+
+        st.markdown(
+            "Puedes cambiar el **Día de servicio** de cada hora "
+            "y los picks se descontarán de ese servicio."
+        )
 
         st.data_editor(
             tabla,
@@ -524,10 +653,19 @@ else:
             args=(editor_key,),
             disabled=["Fecha y hora"],
             column_config={
+
                 "Fecha y hora": st.column_config.TextColumn(
                     "Fecha y hora",
                     width="medium"
                 ),
+
+                "Día de servicio": st.column_config.SelectboxColumn(
+                    "Día de servicio",
+                    options=opciones_visibles,
+                    required=True,
+                    width="medium"
+                ),
+
                 "Picks restantes": st.column_config.NumberColumn(
                     "Picks restantes",
                     min_value=0,
@@ -541,7 +679,7 @@ else:
 
 
 # ==================================================
-# RESUMEN INFERIOR
+# RESUMEN
 # ==================================================
 
 st.divider()
@@ -559,6 +697,6 @@ col2.metric(
 )
 
 st.caption(
-    "Los filtros de fecha y hora son independientes de la semana "
-    "de servicio. Los ajustes manuales se conservan en la base de datos."
+    "Las asignaciones de días de servicio y los ajustes manuales "
+    "se guardan en la base de datos."
 )
