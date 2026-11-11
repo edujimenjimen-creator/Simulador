@@ -126,7 +126,7 @@ def obtener_ajustes():
 
 
 # ==================================================
-# GUARDAR EDICIONES MANUALES DE LA TABLA
+# GUARDAR EDICIONES MANUALES
 # ==================================================
 
 def guardar_ediciones_pendientes(editor_key):
@@ -152,10 +152,8 @@ def guardar_ediciones_pendientes(editor_key):
     if not filas_cambiadas:
         return
 
-    # Procesamos las modificaciones por orden cronológico.
     filas_cambiadas.sort(key=lambda x: x[0])
 
-    # Recuperamos las fechas que se mostraban en el editor.
     fechas_filas = st.session_state.get(
         f"{editor_key}_fechas",
         []
@@ -172,15 +170,14 @@ def guardar_ediciones_pendientes(editor_key):
                 fecha_hora = fechas_filas[indice]
                 fecha = fecha_hora[:10]
 
-                # Elimina ajustes posteriores de ese mismo día.
-                # Los demás días permanecen intactos.
+                # Eliminar ajustes posteriores del mismo día.
                 conn.execute("""
                     DELETE FROM ajustes_pendientes
                     WHERE substr(fecha_hora, 1, 10) = ?
                     AND fecha_hora > ?
                 """, (fecha, fecha_hora))
 
-                # Guarda el nuevo saldo manual.
+                # Guardar el nuevo saldo manual.
                 conn.execute("""
                     INSERT INTO ajustes_pendientes (
                         fecha_hora,
@@ -195,10 +192,25 @@ def guardar_ediciones_pendientes(editor_key):
 
 
 # ==================================================
-# CREACIÓN DE BASE DE DATOS
+# INICIALIZACIÓN
 # ==================================================
 
 crear_base_datos()
+
+if "semana" not in st.session_state:
+    hoy = date.today()
+    st.session_state.semana = hoy - timedelta(
+        days=hoy.weekday()
+    )
+
+if "version_tabla" not in st.session_state:
+    st.session_state.version_tabla = 0
+
+if "productividad" not in st.session_state:
+    st.session_state.productividad = obtener_configuracion(
+        "productividad",
+        3000
+    )
 
 
 # ==================================================
@@ -247,26 +259,6 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
-
-
-# ==================================================
-# ESTADO DE SESIÓN
-# ==================================================
-
-if "semana" not in st.session_state:
-    hoy = date.today()
-    st.session_state.semana = hoy - timedelta(
-        days=hoy.weekday()
-    )
-
-if "version_tabla" not in st.session_state:
-    st.session_state.version_tabla = 0
-
-if "productividad" not in st.session_state:
-    st.session_state.productividad = obtener_configuracion(
-        "productividad",
-        3000
-    )
 
 
 # ==================================================
@@ -349,46 +341,52 @@ st.sidebar.caption(
 
 
 # ==================================================
-# HORARIO DE VISUALIZACIÓN
+# FILTROS DE FECHA Y HORA
 # ==================================================
 
-st.sidebar.subheader("🕒 HORARIO")
+st.sidebar.subheader("🕒 FILTROS DE FECHA Y HORA")
+
+fecha_inicio = st.sidebar.date_input(
+    "Fecha desde",
+    value=dias[0],
+    key="fecha_inicio"
+)
 
 hora_inicio = st.sidebar.time_input(
-    "Hora inicial",
+    "Hora desde",
     value=time(0, 0),
     key="hora_inicio"
 )
 
+fecha_final = st.sidebar.date_input(
+    "Fecha hasta",
+    value=dias[-1],
+    key="fecha_final"
+)
+
 hora_final = st.sidebar.time_input(
-    "Hora final",
+    "Hora hasta",
     value=time(23, 0),
     key="hora_final"
 )
 
 
 # ==================================================
-# CÁLCULO DE PICKS RESTANTES
+# CÁLCULO DE TODA LA PLANIFICACIÓN
 # ==================================================
 
-def calcular_planificacion(
-    dias,
-    productividad,
-    hora_inicio,
-    hora_final
-):
+def calcular_planificacion(dias, productividad):
 
     ajustes = obtener_ajustes()
     registros = []
 
-    for i, dia in enumerate(dias):
+    for dia in dias:
 
         fecha = dia.isoformat()
         servicio = obtener_servicio(fecha)
 
         saldo = servicio
 
-        # Cada día comienza desde su propio total de servicio.
         for hora in range(24):
 
             fecha_hora_dt = datetime.combine(
@@ -400,40 +398,23 @@ def calcular_planificacion(
                 "%Y-%m-%d %H:%M"
             )
 
-            # Si existe un ajuste manual, se convierte
-            # en el nuevo punto de partida.
             if fecha_hora in ajustes:
 
+                # Punto de partida manual.
                 saldo = ajustes[fecha_hora]
 
             else:
 
-                # Se descuenta productividad en cada hora.
+                # Descontar productividad.
                 saldo = max(
                     saldo - productividad,
                     0
                 )
 
-            # Aplicamos el horario de visualización.
-            if hora_inicio <= hora_final:
-
-                dentro_horario = (
-                    hora_inicio.hour <= hora <= hora_final.hour
-                )
-
-            else:
-
-                dentro_horario = (
-                    hora >= hora_inicio.hour
-                    or hora <= hora_final.hour
-                )
-
-            if dentro_horario:
-
-                registros.append({
-                    "Fecha y hora": fecha_hora,
-                    "Picks restantes": int(saldo)
-                })
+            registros.append({
+                "Fecha y hora": fecha_hora_dt,
+                "Picks restantes": int(saldo)
+            })
 
     return pd.DataFrame(registros)
 
@@ -463,15 +444,62 @@ st.write(
     "Las horas posteriores de ese mismo día se recalcularán."
 )
 
-tabla = calcular_planificacion(
+# Calcular primero todas las horas.
+tabla_completa = calcular_planificacion(
     dias,
-    productividad,
-    hora_inicio,
+    productividad
+)
+
+# Construir el intervalo exacto de fechas y horas.
+inicio = datetime.combine(
+    fecha_inicio,
+    hora_inicio
+)
+
+final = datetime.combine(
+    fecha_final,
     hora_final
 )
 
-# Guardamos la correspondencia entre filas y fechas.
-fechas_editor = tabla["Fecha y hora"].tolist()
+if inicio > final:
+
+    st.error(
+        "La fecha y hora inicial no pueden ser posteriores "
+        "a la fecha y hora final."
+    )
+
+    tabla = tabla_completa.iloc[0:0].copy()
+
+else:
+
+    # Aplicar los filtros sin alterar el cálculo completo.
+    tabla = tabla_completa[
+        (tabla_completa["Fecha y hora"] >= inicio) &
+        (tabla_completa["Fecha y hora"] <= final)
+    ].copy()
+
+
+# Formato visual de fecha y hora.
+if not tabla.empty:
+
+    tabla["Fecha y hora"] = tabla[
+        "Fecha y hora"
+    ].dt.strftime("%d/%m/%Y %H:%M")
+
+
+# Correspondencia entre filas y fechas reales.
+fechas_editor = []
+
+if not tabla.empty:
+
+    fechas_editor = [
+        datetime.strptime(
+            valor,
+            "%d/%m/%Y %H:%M"
+        ).strftime("%Y-%m-%d %H:%M")
+        for valor in tabla["Fecha y hora"].tolist()
+    ]
+
 
 editor_key = (
     f"tabla_planificacion_{st.session_state.version_tabla}"
@@ -479,34 +507,47 @@ editor_key = (
 
 st.session_state[f"{editor_key}_fechas"] = fechas_editor
 
-st.data_editor(
-    tabla,
-    use_container_width=True,
-    hide_index=True,
-    height=650,
-    key=editor_key,
-    on_change=guardar_ediciones_pendientes,
-    args=(editor_key,),
-    disabled=["Fecha y hora"],
-    column_config={
-        "Fecha y hora": st.column_config.TextColumn(
-            "Fecha y hora",
-            width="medium"
-        ),
-        "Picks restantes": st.column_config.NumberColumn(
-            "Picks restantes",
-            min_value=0,
-            max_value=1000000,
-            step=1,
-            format="%d",
-            width="medium"
-        )
-    }
-)
+
+# ==================================================
+# EDITOR
+# ==================================================
+
+if tabla.empty:
+
+    st.warning(
+        "No hay registros dentro del intervalo seleccionado."
+    )
+
+else:
+
+    st.data_editor(
+        tabla,
+        use_container_width=True,
+        hide_index=True,
+        height=650,
+        key=editor_key,
+        on_change=guardar_ediciones_pendientes,
+        args=(editor_key,),
+        disabled=["Fecha y hora"],
+        column_config={
+            "Fecha y hora": st.column_config.TextColumn(
+                "Fecha y hora",
+                width="medium"
+            ),
+            "Picks restantes": st.column_config.NumberColumn(
+                "Picks restantes",
+                min_value=0,
+                max_value=1000000,
+                step=1,
+                format="%d",
+                width="medium"
+            )
+        }
+    )
 
 
 # ==================================================
-# INFORMACIÓN DE PRODUCTIVIDAD
+# INFORMACIÓN
 # ==================================================
 
 st.divider()
@@ -524,9 +565,8 @@ col2.metric(
 )
 
 st.caption(
-    "Los cambios de productividad recalculan la previsión "
-    "de todos los días. Los ajustes manuales guardados "
-    "se mantienen como puntos de partida."
+    "Al cambiar la productividad se recalculan todos los días. "
+    "Los ajustes manuales se conservan como puntos de partida."
 )
 
 # ==================================================
