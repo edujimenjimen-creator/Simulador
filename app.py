@@ -1,377 +1,428 @@
+
 import streamlit as st
 import sqlite3
 import pandas as pd
-
 from datetime import date, datetime, time, timedelta
 from contextlib import closing
-
 
 # ==========================================================
 # CONFIGURACIÓN
 # ==========================================================
-
-st.set_page_config(
-    page_title="Gestión de Almacén",
-    page_icon="📦",
-    layout="wide"
-)
-
+st.set_page_config(page_title="Gestión de Almacén", page_icon="📦", layout="wide")
 DB = "almacen.db"
-
-NOMBRES = [
-    "Lunes", "Martes", "Miércoles",
-    "Jueves", "Viernes", "Sábado"
-]
-
+NOMBRES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+COLUMNAS = ["Fecha y hora", "Día de servicio", "Picks restantes", "Estado", "Origen"]
+MANUAL = "✏️ Manual"
+AUTO = "Automático"
 
 # ==========================================================
 # BASE DE DATOS
 # ==========================================================
-
 def conectar():
     return sqlite3.connect(DB)
 
 
 def crear_base_datos():
-
     with closing(conectar()) as conn:
         with conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS servicios (
+                fecha TEXT PRIMARY KEY, picks INTEGER DEFAULT 0)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS configuracion (
+                clave TEXT PRIMARY KEY, valor INTEGER)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS planificacion_congelada (
+                fecha_hora TEXT NOT NULL, fecha_servicio TEXT NOT NULL,
+                pendientes INTEGER NOT NULL, estado TEXT NOT NULL,
+                origen TEXT NOT NULL,
+                PRIMARY KEY (fecha_hora, fecha_servicio, estado))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS ajustes_planificacion (
+                fecha_hora TEXT NOT NULL, fecha_servicio TEXT NOT NULL,
+                pendientes INTEGER NOT NULL,
+                PRIMARY KEY (fecha_hora, fecha_servicio))""")
 
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS servicios (
-                    fecha TEXT PRIMARY KEY,
-                    picks INTEGER DEFAULT 0
-                )
-            """)
-
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS configuracion (
-                    clave TEXT PRIMARY KEY,
-                    valor INTEGER
-                )
-            """)
-
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS planificacion_congelada (
-                    fecha_hora TEXT NOT NULL,
-                    fecha_servicio TEXT NOT NULL,
-                    pendientes INTEGER NOT NULL,
-                    estado TEXT NOT NULL,
-                    origen TEXT NOT NULL,
-                    PRIMARY KEY (fecha_hora, fecha_servicio, estado)
-                )
-            """)
-
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS ajustes_planificacion (
-                    fecha_hora TEXT NOT NULL,
-                    fecha_servicio TEXT NOT NULL,
-                    pendientes INTEGER NOT NULL,
-                    PRIMARY KEY (fecha_hora, fecha_servicio)
-                )
-            """)
+            columnas = [r[1] for r in conn.execute(
+                "PRAGMA table_info(ajustes_planificacion)").fetchall()]
+            if "estado" not in columnas:
+                conn.execute("ALTER TABLE ajustes_planificacion "
+                             "ADD COLUMN estado TEXT DEFAULT 'En curso'")
 
 
-def obtener_servicio(fecha):
-
+def obtener_servicio(fecha_iso):
     with closing(conectar()) as conn:
-        resultado = conn.execute(
-            "SELECT picks FROM servicios WHERE fecha=?",
-            (fecha,)
+        fila = conn.execute(
+            "SELECT picks FROM servicios WHERE fecha=?", (fecha_iso,)
         ).fetchone()
+    return int(fila[0]) if fila else 0
 
-    return int(resultado[0]) if resultado else 0
 
-
-def guardar_servicio(fecha, picks):
-
+def guardar_servicio(fecha_iso, picks):
     with closing(conectar()) as conn:
         with conn:
-            conn.execute("""
-                INSERT INTO servicios (fecha, picks)
-                VALUES (?, ?)
-                ON CONFLICT(fecha)
-                DO UPDATE SET picks=excluded.picks
-            """, (fecha, int(picks)))
+            conn.execute("""INSERT INTO servicios(fecha,picks) VALUES(?,?)
+                ON CONFLICT(fecha) DO UPDATE SET picks=excluded.picks""",
+                (fecha_iso, int(picks)))
 
 
-def guardar_sidebar_servicio(fecha, clave):
-    guardar_servicio(fecha, st.session_state[clave])
+def guardar_sidebar_servicio(fecha_iso, clave):
+    guardar_servicio(fecha_iso, st.session_state[clave])
 
 
 def obtener_configuracion(clave, defecto):
-
     with closing(conectar()) as conn:
-        resultado = conn.execute(
-            "SELECT valor FROM configuracion WHERE clave=?",
-            (clave,)
+        fila = conn.execute(
+            "SELECT valor FROM configuracion WHERE clave=?", (clave,)
         ).fetchone()
-
-    return int(resultado[0]) if resultado else defecto
+    return int(fila[0]) if fila else defecto
 
 
 def guardar_configuracion(clave, valor):
-
     with closing(conectar()) as conn:
         with conn:
-            conn.execute("""
-                INSERT INTO configuracion (clave, valor)
-                VALUES (?, ?)
-                ON CONFLICT(clave)
-                DO UPDATE SET valor=excluded.valor
-            """, (clave, int(valor)))
-
-
-def congelar_hasta_ultimo_manual():
-    """Guarda el tramo ya calculado hasta el último ajuste manual."""
-
-    tabla = st.session_state.get("plan_actual")
-
-    if tabla is None or tabla.empty:
-        return
-
-    manuales = tabla[tabla["Origen"] == "✏️ Manual"]
-
-    if manuales.empty:
-        return
-
-    corte = manuales["Fecha y hora"].max()
-    prefijo = tabla[tabla["Fecha y hora"] <= corte]
-
-    with closing(conectar()) as conn:
-        with conn:
-
-            for _, fila in prefijo.iterrows():
-
-                conn.execute("""
-                    INSERT INTO planificacion_congelada
-                    (fecha_hora, fecha_servicio, pendientes, estado, origen)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(fecha_hora, fecha_servicio, estado)
-                    DO UPDATE SET pendientes=excluded.pendientes,
-                                  origen=excluded.origen
-                """, (
-                    fila["Fecha y hora"].strftime("%Y-%m-%d %H:%M:%S"),
-                    datetime.strptime(
-                        fila["Día de servicio"], "%d/%m/%Y"
-                    ).date().isoformat(),
-                    int(fila["Picks restantes"]),
-                    fila["Estado"],
-                    fila["Origen"]
-                ))
-
-
-def guardar_productividad():
-
-    congelar_hasta_ultimo_manual()
-
-    guardar_configuracion(
-        "productividad",
-        st.session_state.productividad
-    )
-
-    st.session_state.version_tabla += 1
-
-
-def obtener_congelados():
-
-    with closing(conectar()) as conn:
-        filas = conn.execute("""
-            SELECT fecha_hora, fecha_servicio, pendientes, estado, origen
-            FROM planificacion_congelada
-            ORDER BY fecha_hora,
-            CASE estado WHEN 'Fin de servicio' THEN 0 ELSE 1 END
-        """).fetchall()
-
-    return filas
+            conn.execute("""INSERT INTO configuracion(clave,valor) VALUES(?,?)
+                ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor""",
+                (clave, int(valor)))
 
 
 def obtener_ajustes():
+    with closing(conectar()) as conn:
+        filas = conn.execute("""SELECT fecha_hora, fecha_servicio,
+            pendientes, estado FROM ajustes_planificacion""").fetchall()
+
+    resultado = {}
+    for fecha_hora, fecha_servicio, pendientes, estado in filas:
+        resultado[(fecha_hora, fecha_servicio)] = {
+            "pendientes": int(pendientes),
+            "estado": estado or "En curso"
+        }
+    return resultado
+
+
+def obtener_congelados():
+    with closing(conectar()) as conn:
+        return conn.execute("""SELECT fecha_hora, fecha_servicio,
+            pendientes, estado, origen FROM planificacion_congelada
+            ORDER BY fecha_hora, fecha_servicio, estado""").fetchall()
+
+
+def guardar_filas_congeladas(filas):
+    """Guarda literalmente los cálculos anteriores, sin recalcularlos."""
+    if filas is None or filas.empty:
+        return
 
     with closing(conectar()) as conn:
-        filas = conn.execute("""
-            SELECT fecha_hora, fecha_servicio, pendientes
-            FROM ajustes_planificacion
-        """).fetchall()
+        with conn:
+            for _, fila in filas.iterrows():
+                momento = fila["Fecha y hora"]
 
-    return {
-        (fecha_hora, fecha_servicio): int(pendientes)
-        for fecha_hora, fecha_servicio, pendientes in filas
-    }
+                if isinstance(momento, str):
+                    momento = datetime.strptime(
+                        momento, "%Y-%m-%d %H:%M:%S"
+                    )
+
+                servicio = datetime.strptime(
+                    fila["Día de servicio"], "%d/%m/%Y"
+                ).date()
+
+                conn.execute("""INSERT INTO planificacion_congelada
+                    (fecha_hora, fecha_servicio, pendientes, estado, origen)
+                    VALUES(?,?,?,?,?)
+                    ON CONFLICT(fecha_hora,fecha_servicio,estado)
+                    DO UPDATE SET pendientes=excluded.pendientes,
+                                  origen=excluded.origen""",
+                    (
+                        momento.strftime("%Y-%m-%d %H:%M:%S"),
+                        servicio.isoformat(),
+                        int(fila["Picks restantes"]),
+                        fila["Estado"],
+                        fila["Origen"]
+                    ))
+
+
+def congelar_plan_hasta_ancla():
+    """Al cambiar productividad, conserva todo hasta el último manual."""
+    plan = st.session_state.get("plan_actual")
+    ajustes = obtener_ajustes()
+
+    if plan is None or plan.empty or not ajustes:
+        return
+
+    ultimo_txt, _ = max(ajustes.keys(), key=lambda k: k[0])
+    corte = datetime.strptime(ultimo_txt, "%Y-%m-%d %H:%M:%S")
+
+    prefijo = plan[plan["Fecha y hora"] <= corte].copy()
+    guardar_filas_congeladas(prefijo)
+
+
+def guardar_productividad():
+    congelar_plan_hasta_ancla()
+    guardar_configuracion("productividad", st.session_state.productividad)
+    st.session_state.version_tabla += 1
 
 
 # ==========================================================
 # GUARDAR EDICIONES MANUALES
 # ==========================================================
-
 def guardar_ediciones(editor_key):
-
-    estado = st.session_state.get(editor_key, {})
-    cambios = estado.get("edited_rows", {})
+    estado_editor = st.session_state.get(editor_key, {})
+    cambios = estado_editor.get("edited_rows", {})
 
     if not cambios:
         return
 
     referencias = st.session_state.get(
-        f"{editor_key}_referencias",
-        []
+        f"{editor_key}_referencias", []
     )
+    plan_anterior = st.session_state.get("plan_actual")
 
-    # El desplegable de la primera fila determina el primer servicio.
-    if "0" in cambios or 0 in cambios:
+    # Selector del primer servicio.
+    cambio_primera = cambios.get(0, cambios.get("0", {}))
 
-        valores_primera_fila = cambios.get(
-            "0", cambios.get(0, {})
-        )
+    if "Día de servicio" in cambio_primera:
+        try:
+            nueva_fecha = datetime.strptime(
+                cambio_primera["Día de servicio"], "%d/%m/%Y"
+            ).date()
+            st.session_state.servicio_inicial = nueva_fecha.isoformat()
+        except (ValueError, TypeError):
+            pass
 
-        if "Día de servicio" in valores_primera_fila:
+    ediciones = []
 
-            try:
-                fecha_elegida = datetime.strptime(
-                    valores_primera_fila["Día de servicio"],
-                    "%d/%m/%Y"
-                ).date()
-
-                st.session_state.servicio_inicial = (
-                    fecha_elegida.isoformat()
-                )
-
-            except ValueError:
-                pass
-
-    # Recoger las celdas de picks modificadas.
-    ediciones_picks = []
-
-    for indice, valores in cambios.items():
-
+    for indice_raw, valores in cambios.items():
         if "Picks restantes" not in valores:
             continue
 
-        indice = int(indice)
+        indice = int(indice_raw)
 
-        if indice >= len(referencias):
+        if indice < 0 or indice >= len(referencias):
             continue
 
-        referencia = referencias[indice]
+        ref = referencias[indice]
 
-        if referencia["estado"] == "Fin de servicio":
+        if ref["estado"] == "Fin de servicio":
             continue
 
-        fecha_hora = referencia["fecha_hora"]
-        fecha_servicio = referencia["fecha_servicio"]
-        pendientes = max(0, int(valores["Picks restantes"]))
-
-        ediciones_picks.append((
-            fecha_hora,
-            fecha_servicio,
-            pendientes
+        ediciones.append((
+            ref["fecha_hora"],
+            ref["fecha_servicio"],
+            max(0, int(valores["Picks restantes"])),
+            ref["estado"]
         ))
 
-    if ediciones_picks:
+    if ediciones:
+        # Si se editan varias celdas a la vez, se toma la más temprana.
+        # Todo lo que queda debajo de ella vuelve a ser automático.
+        ediciones.sort(key=lambda x: (x[0], x[1]))
 
-        # La edición más temprana es el nuevo punto de partida manual.
-        ediciones_picks.sort(key=lambda x: x[0])
+        fecha_hora, fecha_servicio, pendientes, estado_fila = ediciones[0]
+        corte = datetime.strptime(fecha_hora, "%Y-%m-%d %H:%M:%S")
 
-        fecha_hora, fecha_servicio, pendientes = ediciones_picks[0]
+        # Congelar todas las filas anteriores a la editada.
+        if plan_anterior is not None and not plan_anterior.empty:
+            prefijo = plan_anterior[
+                plan_anterior["Fecha y hora"] < corte
+            ].copy()
+            guardar_filas_congeladas(prefijo)
 
         with closing(conectar()) as conn:
             with conn:
+                # Eliminar los cálculos posteriores y los antiguos manuales.
+                conn.execute(
+                    "DELETE FROM planificacion_congelada WHERE fecha_hora >= ?",
+                    (fecha_hora,)
+                )
+                conn.execute(
+                    "DELETE FROM ajustes_planificacion WHERE fecha_hora >= ?",
+                    (fecha_hora,)
+                )
 
-                # Eliminar el tramo posterior al nuevo ajuste.
-                conn.execute("""
-                    DELETE FROM planificacion_congelada
-                    WHERE fecha_hora >= ?
-                """, (fecha_hora,))
-
-                conn.execute("""
-                    DELETE FROM ajustes_planificacion
-                    WHERE fecha_hora >= ?
-                """, (fecha_hora,))
-
-                # Guardar el nuevo punto manual.
-                conn.execute("""
-                    INSERT INTO ajustes_planificacion (
-                        fecha_hora,
-                        fecha_servicio,
-                        pendientes
-                    )
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(fecha_hora, fecha_servicio)
-                    DO UPDATE SET pendientes=excluded.pendientes
-                """, (
-                    fecha_hora,
-                    fecha_servicio,
-                    pendientes
-                ))
+                # Guardar el nuevo valor manual en SU fecha y hora.
+                conn.execute("""INSERT INTO ajustes_planificacion
+                    (fecha_hora, fecha_servicio, pendientes, estado)
+                    VALUES(?,?,?,?)
+                    ON CONFLICT(fecha_hora,fecha_servicio)
+                    DO UPDATE SET pendientes=excluded.pendientes,
+                                  estado=excluded.estado""",
+                    (fecha_hora, fecha_servicio, pendientes, estado_fila))
 
     st.session_state.version_tabla += 1
 
 
 # ==========================================================
+# CÁLCULO DE PLANIFICACIÓN
+# ==========================================================
+def calcular_planificacion(inicio, final, servicio_inicial, productividad):
+    ajustes = obtener_ajustes()
+    congelados = obtener_congelados()
+    registros = {}
+
+    def clave_fila(momento, servicio, estado):
+        return (momento, servicio.isoformat(), estado)
+
+    def agregar(momento, servicio, saldo, estado, origen=AUTO):
+        if inicio <= momento <= final:
+            k = clave_fila(momento, servicio, estado)
+            registros[k] = {
+                "Fecha y hora": momento,
+                "Día de servicio": servicio.strftime("%d/%m/%Y"),
+                "Picks restantes": max(0, int(round(saldo))),
+                "Estado": estado,
+                "Origen": origen
+            }
+
+    # 1. Recuperar las filas históricas congeladas.
+    for momento_txt, servicio_txt, pendientes, estado, origen in congelados:
+        momento = datetime.strptime(
+            momento_txt, "%Y-%m-%d %H:%M:%S"
+        )
+        servicio = date.fromisoformat(servicio_txt)
+
+        agregar(momento, servicio, pendientes, estado, origen)
+
+    # 2. Localizar el último ajuste manual.
+    ancla = None
+
+    if ajustes:
+        (ancla_txt, servicio_txt), datos = max(
+            ajustes.items(), key=lambda item: item[0][0]
+        )
+
+        ancla = (
+            datetime.strptime(ancla_txt, "%Y-%m-%d %H:%M:%S"),
+            date.fromisoformat(servicio_txt),
+            datos["pendientes"],
+            datos["estado"]
+        )
+
+    # 3. Comenzar desde el último manual, no desde el principio.
+    if ancla:
+        cursor, dia_servicio, saldo, estado_ancla = ancla
+
+        # La fila manual se mantiene exactamente en su posición.
+        agregar(cursor, dia_servicio, saldo, estado_ancla, MANUAL)
+        iniciado = True
+
+    else:
+        cursor = inicio
+        dia_servicio = servicio_inicial
+        saldo = float(obtener_servicio(dia_servicio.isoformat()))
+        iniciado = False
+
+    # 4. Calcular exclusivamente las filas posteriores al ancla.
+    limite_eventos = 20000
+    eventos = 0
+
+    while cursor <= final and eventos < limite_eventos:
+        eventos += 1
+
+        if not iniciado:
+            agregar(
+                cursor, dia_servicio, saldo,
+                "Inicio de servicio", AUTO
+            )
+            iniciado = True
+
+        if saldo <= 0:
+            agregar(cursor, dia_servicio, 0, "Fin de servicio", AUTO)
+
+            dia_servicio += timedelta(days=1)
+            saldo = float(obtener_servicio(dia_servicio.isoformat()))
+            iniciado = False
+            continue
+
+        if cursor >= final:
+            break
+
+        siguiente_hora = (
+            cursor.replace(minute=0, second=0, microsecond=0)
+            + timedelta(hours=1)
+        )
+
+        segundos_hasta_fin = saldo / productividad * 3600
+        hora_fin = cursor + timedelta(seconds=segundos_hasta_fin)
+
+        siguiente = min(siguiente_hora, hora_fin, final)
+
+        if siguiente <= cursor:
+            break
+
+        saldo = max(
+            0.0,
+            saldo - productividad *
+            (siguiente - cursor).total_seconds() / 3600
+        )
+
+        cursor = siguiente
+
+        if saldo <= 0.000001:
+            saldo = 0.0
+
+            agregar(
+                cursor, dia_servicio, 0,
+                "Fin de servicio", AUTO
+            )
+
+            dia_servicio += timedelta(days=1)
+            saldo = float(obtener_servicio(dia_servicio.isoformat()))
+            iniciado = False
+
+        else:
+            agregar(
+                cursor, dia_servicio, saldo,
+                "En curso", AUTO
+            )
+
+    df = pd.DataFrame(list(registros.values()), columns=COLUMNAS)
+
+    if not df.empty:
+        df = df.sort_values(
+            by=["Fecha y hora", "Estado", "Día de servicio"],
+            ascending=[True, True, True]
+        ).reset_index(drop=True)
+
+    return df
+
+
+# ==========================================================
 # INICIALIZACIÓN
 # ==========================================================
-
 crear_base_datos()
 
 if "semana" not in st.session_state:
-
     hoy = date.today()
-
-    st.session_state.semana = (
-        hoy - timedelta(days=hoy.weekday())
-    )
+    st.session_state.semana = hoy - timedelta(days=hoy.weekday())
 
 if "version_tabla" not in st.session_state:
     st.session_state.version_tabla = 0
 
 if "productividad" not in st.session_state:
-
     st.session_state.productividad = obtener_configuracion(
-        "productividad",
-        3500
+        "productividad", 3500
     )
 
+if "servicio_inicial" not in st.session_state:
+    st.session_state.servicio_inicial = date.today().isoformat()
+
 
 # ==========================================================
-# ESTILO GENERAL
+# ESTILO
 # ==========================================================
-
 st.markdown("""
 <style>
-    .stApp {
-        background-color: #f3f5f9;
-    }
-
-    h1, h2, h3 {
-        color: #17243a;
-    }
-
-    .block-container {
-        padding-top: 2rem;
-    }
-
-    [data-testid="stSidebar"] {
-        min-width: 280px;
-    }
-
-    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
-        gap: 0.35rem;
-    }
-
-    [data-testid="stSidebar"] [data-testid="stExpander"] {
-        margin-top: 0 !important;
-        margin-bottom: 0 !important;
-        border: none !important;
-    }
-
-    [data-testid="stSidebar"] [data-testid="stExpander"] summary {
-        padding-top: 7px !important;
-        padding-bottom: 7px !important;
-    }
-
-    [data-testid="stSidebar"] .stMarkdown {
-        margin-bottom: 0 !important;
-    }
+.stApp {background-color:#f3f5f9;}
+h1,h2,h3 {color:#17243a;}
+.block-container {padding-top:2rem;}
+[data-testid="stSidebar"] {min-width:280px;}
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {gap:.35rem;}
+[data-testid="stSidebar"] [data-testid="stExpander"] {
+    margin-top:0!important;
+    margin-bottom:0!important;
+    border:none!important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    padding-top:7px!important;
+    padding-bottom:7px!important;
+}
+[data-testid="stSidebar"] .stMarkdown {margin-bottom:0!important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -379,10 +430,8 @@ st.markdown("""
 # ==========================================================
 # SIDEBAR
 # ==========================================================
-
 st.sidebar.title("📦 ALMACÉN")
 st.sidebar.caption("Panel de control")
-
 st.sidebar.subheader("📅 SEMANA DE SERVICIO")
 
 fecha_elegida = st.sidebar.date_input(
@@ -391,36 +440,23 @@ fecha_elegida = st.sidebar.date_input(
     format="DD/MM/YYYY"
 )
 
-lunes = fecha_elegida - timedelta(
-    days=fecha_elegida.weekday()
-)
-
+lunes = fecha_elegida - timedelta(days=fecha_elegida.weekday())
 st.session_state.semana = lunes
-
-dias = [
-    lunes + timedelta(days=i)
-    for i in range(6)
-]
+dias = [lunes + timedelta(days=i) for i in range(6)]
 
 
 # ==========================================================
 # PICKS POR SERVICIO
 # ==========================================================
-
-with st.sidebar.expander(
-    "📋 PICKS POR SERVICIO",
-    expanded=False
-):
-
+with st.sidebar.expander("📋 PICKS POR SERVICIO", expanded=False):
     st.caption("Picks totales de cada día.")
 
     for i, dia in enumerate(dias):
-
-        fecha = dia.isoformat()
-        clave = f"servicio_{fecha}"
+        fecha_iso = dia.isoformat()
+        clave = f"servicio_{fecha_iso}"
 
         if clave not in st.session_state:
-            st.session_state[clave] = obtener_servicio(fecha)
+            st.session_state[clave] = obtener_servicio(fecha_iso)
 
         st.number_input(
             f"{NOMBRES[i]} {dia.strftime('%d/%m')}",
@@ -429,14 +465,13 @@ with st.sidebar.expander(
             step=1,
             key=clave,
             on_change=guardar_sidebar_servicio,
-            args=(fecha, clave)
+            args=(fecha_iso, clave)
         )
 
 
 # ==========================================================
 # PRODUCTIVIDAD
 # ==========================================================
-
 st.sidebar.subheader("⚙️ PRODUCTIVIDAD")
 
 st.sidebar.slider(
@@ -449,272 +484,12 @@ st.sidebar.slider(
 )
 
 productividad = int(st.session_state.productividad)
-
-st.sidebar.caption(
-    f"Productividad: {productividad:,} picks/h"
-)
+st.sidebar.caption(f"Productividad: {productividad:,} picks/h")
 
 
 # ==========================================================
-# CÁLCULO CONSECUTIVO DE SERVICIOS
+# PANTALLA PRINCIPAL Y FILTROS
 # ==========================================================
-
-def calcular_planificacion(
-    inicio,
-    final,
-    servicio_inicial,
-    productividad
-):
-
-    ajustes = obtener_ajustes()
-    congelados = obtener_congelados()
-
-    registros = []
-
-    def agregar(
-        momento,
-        dia,
-        saldo,
-        estado,
-        origen="Automático"
-    ):
-
-        if inicio <= momento <= final:
-
-            registros.append({
-                "Fecha y hora": momento,
-                "Día de servicio": dia.strftime("%d/%m/%Y"),
-                "Picks restantes": max(0, int(round(saldo))),
-                "Estado": estado,
-                "Origen": origen,
-            })
-
-    # Buscar el último punto manual.
-    anclas = []
-
-    for (momento, servicio), saldo in ajustes.items():
-
-        anclas.append((
-            datetime.strptime(
-                momento, "%Y-%m-%d %H:%M:%S"
-            ),
-            date.fromisoformat(servicio),
-            saldo
-        ))
-
-    ancla = max(anclas, key=lambda x: x[0]) if anclas else None
-
-    if ancla:
-
-        corte, dia_servicio, saldo = ancla
-
-        # Recuperar el tramo congelado anterior al último ajuste.
-        for (
-            momento_txt,
-            servicio_txt,
-            pendientes,
-            estado,
-            origen
-        ) in congelados:
-
-            momento = datetime.strptime(
-                momento_txt, "%Y-%m-%d %H:%M:%S"
-            )
-
-            if momento <= corte:
-
-                agregar(
-                    momento,
-                    date.fromisoformat(servicio_txt),
-                    pendientes,
-                    estado,
-                    origen
-                )
-
-        # Añadir los puntos manuales previos que no estén congelados.
-        for (
-            (momento_txt, servicio_txt),
-            pendientes
-        ) in ajustes.items():
-
-            momento = datetime.strptime(
-                momento_txt, "%Y-%m-%d %H:%M:%S"
-            )
-
-            if momento <= corte and not any(
-                r["Fecha y hora"] == momento
-                and r["Día de servicio"] ==
-                date.fromisoformat(servicio_txt).strftime("%d/%m/%Y")
-                for r in registros
-            ):
-
-                agregar(
-                    momento,
-                    date.fromisoformat(servicio_txt),
-                    pendientes,
-                    "En curso",
-                    "✏️ Manual"
-                )
-
-        # Asegurar que el último punto manual aparece.
-        if not any(
-            r["Fecha y hora"] == corte
-            and r["Día de servicio"] ==
-            dia_servicio.strftime("%d/%m/%Y")
-            for r in registros
-        ):
-
-            agregar(
-                corte,
-                dia_servicio,
-                saldo,
-                "En curso",
-                "✏️ Manual"
-            )
-
-        cursor = corte
-        saldo = float(saldo)
-        iniciado = True
-
-    else:
-
-        cursor = inicio
-        dia_servicio = servicio_inicial
-        saldo = float(
-            obtener_servicio(dia_servicio.isoformat())
-        )
-        iniciado = False
-
-    limite = 1000
-    procesados = 0
-
-    while cursor <= final and procesados < limite:
-
-        if not iniciado:
-
-            clave = (
-                cursor.strftime("%Y-%m-%d %H:%M:%S"),
-                dia_servicio.isoformat()
-            )
-
-            if clave in ajustes:
-                saldo = float(ajustes[clave])
-
-            agregar(
-                cursor,
-                dia_servicio,
-                saldo,
-                "Inicio de servicio",
-                "✏️ Manual" if clave in ajustes else "Automático"
-            )
-
-        iniciado = True
-
-        if saldo <= 0.000001:
-
-            agregar(
-                cursor,
-                dia_servicio,
-                0,
-                "Fin de servicio"
-            )
-
-            dia_servicio += timedelta(days=1)
-            procesados += 1
-
-            saldo = float(
-                obtener_servicio(dia_servicio.isoformat())
-            )
-
-            iniciado = False
-            continue
-
-        if cursor >= final:
-            break
-
-        siguiente_hora = (
-            cursor.replace(
-                minute=0,
-                second=0,
-                microsecond=0
-            ) + timedelta(hours=1)
-        )
-
-        hora_fin = cursor + timedelta(
-            seconds=saldo / productividad * 3600
-        )
-
-        siguiente = min(
-            siguiente_hora,
-            hora_fin,
-            final
-        )
-
-        saldo = max(
-            0.,
-            saldo - productividad *
-            (siguiente - cursor).total_seconds() / 3600
-        )
-
-        cursor = siguiente
-
-        if saldo <= 0.000001:
-
-            saldo = 0.
-
-            agregar(
-                cursor,
-                dia_servicio,
-                0,
-                "Fin de servicio"
-            )
-
-            dia_servicio += timedelta(days=1)
-            procesados += 1
-
-            saldo = float(
-                obtener_servicio(dia_servicio.isoformat())
-            )
-
-            iniciado = False
-            continue
-
-        clave = (
-            cursor.strftime("%Y-%m-%d %H:%M:%S"),
-            dia_servicio.isoformat()
-        )
-
-        origen = "Automático"
-
-        if clave in ajustes:
-
-            saldo = float(ajustes[clave])
-            origen = "✏️ Manual"
-
-        agregar(
-            cursor,
-            dia_servicio,
-            saldo,
-            "En curso",
-            origen
-        )
-
-    return pd.DataFrame(
-        registros,
-        columns=[
-            "Fecha y hora",
-            "Día de servicio",
-            "Picks restantes",
-            "Estado",
-            "Origen"
-        ]
-    )
-
-
-# ==========================================================
-# PANTALLA PRINCIPAL
-# ==========================================================
-
 st.title("📦 Gestión de almacén")
 
 st.caption(
@@ -723,22 +498,13 @@ st.caption(
 )
 
 st.divider()
-
 st.header("📊 Previsión de picks restantes")
-
-
-# ==========================================================
-# FILTROS CENTRALES
-# ==========================================================
-
 st.markdown("### 🗓️ Seleccionar intervalo de consulta")
 
-col1, col2, col3, col4 = st.columns(4)
+c1, c2, c3, c4 = st.columns(4)
 
-with col1:
-
+with c1:
     st.markdown("**Fecha inicio**")
-
     fecha_inicio = st.date_input(
         "Fecha inicio",
         value=dias[0],
@@ -747,10 +513,8 @@ with col1:
         label_visibility="collapsed"
     )
 
-with col2:
-
+with c2:
     st.markdown("**Hora inicio**")
-
     hora_inicio = st.time_input(
         "Hora inicio",
         value=time(22, 0),
@@ -758,10 +522,8 @@ with col2:
         label_visibility="collapsed"
     )
 
-with col3:
-
+with c3:
     st.markdown("**Fecha fin**")
-
     fecha_final = st.date_input(
         "Fecha fin",
         value=dias[-1],
@@ -770,10 +532,8 @@ with col3:
         label_visibility="collapsed"
     )
 
-with col4:
-
+with c4:
     st.markdown("**Hora fin**")
-
     hora_final = st.time_input(
         "Hora fin",
         value=time(23, 0),
@@ -783,51 +543,40 @@ with col4:
 
 
 # ==========================================================
-# TABLA Y COLORES
+# TABLA
 # ==========================================================
-
 st.divider()
 
 inicio = datetime.combine(fecha_inicio, hora_inicio)
 final = datetime.combine(fecha_final, hora_final)
 
 if inicio >= final:
-
     st.error(
         "La fecha y hora final deben ser posteriores "
         "a la fecha y hora inicial."
     )
 
 else:
-
-    # Fechas disponibles para el desplegable.
     opciones_fechas = []
-
     dia_opcion = fecha_inicio
 
     while dia_opcion <= fecha_final + timedelta(days=30):
-
-        opciones_fechas.append(
-            dia_opcion.strftime("%d/%m/%Y")
-        )
-
+        opciones_fechas.append(dia_opcion.strftime("%d/%m/%Y"))
         dia_opcion += timedelta(days=1)
 
-    # Servicio inicial.
-    if "servicio_inicial" not in st.session_state:
-        st.session_state.servicio_inicial = fecha_inicio.isoformat()
-
-    servicio_actual = datetime.strptime(
-        st.session_state.servicio_inicial,
-        "%Y-%m-%d"
-    ).date()
+    try:
+        servicio_actual = date.fromisoformat(
+            st.session_state.servicio_inicial
+        )
+    except (ValueError, TypeError):
+        servicio_actual = fecha_inicio
+        st.session_state.servicio_inicial = servicio_actual.isoformat()
 
     servicio_visible = servicio_actual.strftime("%d/%m/%Y")
 
     if servicio_visible not in opciones_fechas:
         opciones_fechas.insert(0, servicio_visible)
 
-    # Calcular la planificación.
     tabla = calcular_planificacion(
         inicio,
         final,
@@ -836,37 +585,29 @@ else:
     )
 
     if tabla.empty:
-
-        st.warning("No hay datos para mostrar.")
+        st.warning("No hay datos para mostrar en ese intervalo.")
 
     else:
+        # Guardar la tabla original para que el callback identifique
+        # cada celda por su fecha/hora y servicio, nunca por su posición.
+        st.session_state["plan_actual"] = tabla.copy(deep=True)
 
-        # Referencias internas para guardar los ajustes.
         referencias = []
 
         for _, fila in tabla.iterrows():
-
             referencias.append({
                 "fecha_hora": fila["Fecha y hora"].strftime(
                     "%Y-%m-%d %H:%M:%S"
                 ),
                 "fecha_servicio": datetime.strptime(
-                    fila["Día de servicio"],
-                    "%d/%m/%Y"
-                ).strftime("%Y-%m-%d"),
+                    fila["Día de servicio"], "%d/%m/%Y"
+                ).date().isoformat(),
                 "estado": fila["Estado"]
             })
 
-        indices_rojos = {
-            indice
-            for indice, origen in enumerate(tabla["Origen"])
-            if origen == "✏️ Manual"
-        }
+        tabla_vista = tabla.copy()
 
-        # Guardar la instantánea antes de convertir fechas a texto.
-        st.session_state["plan_actual"] = tabla.copy(deep=True)
-
-        tabla["Fecha y hora"] = tabla[
+        tabla_vista["Fecha y hora"] = tabla_vista[
             "Fecha y hora"
         ].dt.strftime("%d/%m/%Y %H:%M:%S")
 
@@ -879,73 +620,39 @@ else:
         ] = referencias
 
         st.markdown(
-            "Selecciona el servicio inicial en la primera fila. "
-            "Los siguientes servicios comenzarán automáticamente."
+            "Modifica los picks en la misma fila. "
+            "Esa fila será el nuevo punto manual; "
+            "solo se recalcularán las filas posteriores."
         )
 
-        # --------------------------------------------------
-        # COLOR DE FONDO SEGÚN ESTADO
-        # --------------------------------------------------
+        # Colores de las filas.
+        manual_indices = [
+            i for i, origen in enumerate(tabla_vista["Origen"])
+            if origen == MANUAL
+        ]
 
-        def colorear_filas(fila):
+        def estilo_fila(fila):
+            if fila["Estado"] == "Fin de servicio":
+                color = "#d9f2df"
+            elif fila["Estado"] == "Inicio de servicio":
+                color = "#dceeff"
+            else:
+                color = "transparent"
 
-            estado = fila["Estado"]
+            return [f"background-color:{color};" for _ in fila]
 
-            if estado == "Fin de servicio":
-
-                return [
-                    "background-color: #d9f2df;"
-                    for _ in fila
-                ]
-
-            if estado == "Inicio de servicio":
-
-                return [
-                    "background-color: #dceeff;"
-                    for _ in fila
-                ]
-
+        def estilo_picks(columna):
             return [
-                "background-color: transparent;"
-                for _ in fila
+                "color:#d00000;font-weight:bold;"
+                if i in manual_indices else "color:inherit;"
+                for i in columna.index
             ]
 
-        # --------------------------------------------------
-        # COLOR ROJO PARA MODIFICACIONES MANUALES
-        # --------------------------------------------------
-
-        def colorear_picks(columna):
-
-            estilos = []
-
-            for indice in columna.index:
-
-                if indice in indices_rojos:
-
-                    estilos.append(
-                        "color: #d00000; font-weight: bold;"
-                    )
-
-                else:
-
-                    estilos.append(
-                        "color: inherit;"
-                    )
-
-            return estilos
-
         tabla_estilizada = (
-            tabla.style
-            .apply(colorear_filas, axis=1)
-            .apply(
-                colorear_picks,
-                subset=["Picks restantes"]
-            )
+            tabla_vista.style
+            .apply(estilo_fila, axis=1)
+            .apply(estilo_picks, subset=["Picks restantes"])
         )
-
-        # --------------------------------------------------
-        # EDITOR DE TABLA
-        # --------------------------------------------------
 
         st.data_editor(
             tabla_estilizada,
@@ -955,25 +662,18 @@ else:
             key=editor_key,
             on_change=guardar_ediciones,
             args=(editor_key,),
-            disabled=[
-                "Fecha y hora",
-                "Estado",
-                "Origen"
-            ],
+            disabled=["Fecha y hora", "Estado", "Origen"],
             column_config={
-
                 "Fecha y hora": st.column_config.TextColumn(
                     "Fecha y hora",
                     width="medium"
                 ),
-
                 "Día de servicio": st.column_config.SelectboxColumn(
                     "Día de servicio",
                     options=opciones_fechas,
                     required=True,
                     width="medium"
                 ),
-
                 "Picks restantes": st.column_config.NumberColumn(
                     "Picks restantes",
                     min_value=0,
@@ -982,12 +682,10 @@ else:
                     format="%d",
                     width="medium"
                 ),
-
                 "Estado": st.column_config.TextColumn(
                     "Estado",
                     width="medium"
                 ),
-
                 "Origen": st.column_config.TextColumn(
                     "Origen",
                     width="small"
@@ -995,51 +693,27 @@ else:
             }
         )
 
-        # --------------------------------------------------
-        # LEYENDA DE COLORES
-        # --------------------------------------------------
-
         st.markdown("""
-        <div style="
-            display:flex;
-            flex-wrap:wrap;
-            gap:22px;
-            margin-top:14px;
-            font-size:14px;
-        ">
-
-            <span>
-                <span style="
-                    display:inline-block;
-                    width:13px;
-                    height:13px;
-                    background:#d9f2df;
-                    border:1px solid #a9d5b3;
-                    border-radius:3px;
-                "></span>
-                Fin de servicio
-            </span>
-
-            <span>
-                <span style="
-                    display:inline-block;
-                    width:13px;
-                    height:13px;
-                    background:#dceeff;
-                    border:1px solid #aacbed;
-                    border-radius:3px;
-                "></span>
-                Inicio de servicio
-            </span>
-
-            <span style="color:#d00000;font-weight:bold;">
-                ✏️ Manual: valor editado y guardado
-            </span>
-
-            <span>
-                Automático: valor calculado por productividad
-            </span>
-
+        <div style="display:flex;flex-wrap:wrap;gap:22px;
+                    margin-top:14px;font-size:14px;">
+          <span>
+            <span style="display:inline-block;width:13px;height:13px;
+            background:#d9f2df;border:1px solid #a9d5b3;
+            border-radius:3px;"></span>
+            Fin de servicio
+          </span>
+          <span>
+            <span style="display:inline-block;width:13px;height:13px;
+            background:#dceeff;border:1px solid #aacbed;
+            border-radius:3px;"></span>
+            Inicio de servicio
+          </span>
+          <span style="color:#d00000;font-weight:bold;">
+            ✏️ Manual: valor editado
+          </span>
+          <span>
+            Automático: valor calculado por productividad
+          </span>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1047,24 +721,18 @@ else:
 # ==========================================================
 # RESUMEN
 # ==========================================================
-
 st.divider()
 
-col1, col2 = st.columns(2)
+col_a, col_b = st.columns(2)
 
-col1.metric(
-    "Productividad",
-    f"{productividad:,} picks/h"
-)
-
-col2.metric(
+col_a.metric("Productividad", f"{productividad:,} picks/h")
+col_b.metric(
     "Días consultados",
     (fecha_final - fecha_inicio).days + 1
 )
 
 st.caption(
-    "Las filas modificadas manualmente se identifican en la columna "
-    "«Origen» como ✏️ Manual. Las demás son Automáticas. "
-    "Las filas de finalización aparecen en verde claro y las de inicio "
-    "de servicio en azul claro."
+    "Cada ajuste manual se conserva en su fecha y hora. "
+    "Las filas anteriores no cambian; las posteriores se "
+    "recalculan automáticamente con la productividad seleccionada."
 )
