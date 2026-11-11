@@ -50,7 +50,6 @@ def crear_base_datos():
                 )
             """)
 
-            # Carga de tiendas común a todos los días
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS carga_tiendas (
                     hora INTEGER PRIMARY KEY,
@@ -140,7 +139,7 @@ def guardar_tienda_sidebar(hora, clave):
 crear_base_datos()
 
 # ==================================================
-# ESTILO
+# ESTILO VISUAL COMPACTO
 # ==================================================
 
 st.markdown("""
@@ -164,8 +163,43 @@ st.markdown("""
         padding-top: 2rem;
     }
 
+    /* Barra lateral más estrecha y compacta */
     [data-testid="stSidebar"] {
         min-width: 280px;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+        gap: 0.35rem;
+    }
+
+    /* Desplegables sin separación excesiva */
+    [data-testid="stSidebar"] [data-testid="stExpander"] {
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+        border: none !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary {
+        padding-top: 7px !important;
+        padding-bottom: 7px !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stExpander"] details {
+        border: none !important;
+    }
+
+    /* Reducir espacios de textos */
+    [data-testid="stSidebar"] .stMarkdown {
+        margin-bottom: 0 !important;
+    }
+
+    /* Ocultar separadores horizontales de la barra lateral */
+    [data-testid="stSidebar"] hr {
+        display: none !important;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stWidgetLabel"] {
+        margin-bottom: 2px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -187,7 +221,6 @@ if "semana" not in st.session_state:
 
 st.sidebar.title("📦 ALMACÉN")
 st.sidebar.caption("Panel de control")
-st.sidebar.divider()
 
 st.sidebar.subheader("📅 SEMANA DE SERVICIO")
 
@@ -209,10 +242,8 @@ dias = [
 ]
 
 # ==================================================
-# PICKS POR SERVICIO: PLEGABLE
+# PICKS POR SERVICIO
 # ==================================================
-
-st.sidebar.divider()
 
 with st.sidebar.expander(
     "📋 PICKS POR SERVICIO",
@@ -242,10 +273,8 @@ with st.sidebar.expander(
         )
 
 # ==================================================
-# CARGA DE TIENDAS: COMÚN A TODOS LOS DÍAS
+# CARGA DE TIENDAS COMÚN
 # ==================================================
-
-st.sidebar.divider()
 
 datos_tiendas = obtener_tiendas_comunes()
 
@@ -254,9 +283,7 @@ with st.sidebar.expander(
     expanded=False
 ):
 
-    st.caption(
-        "Esta carga es común para los seis días de servicio."
-    )
+    st.caption("Carga común para los seis días.")
 
     for hora in range(24):
 
@@ -284,8 +311,6 @@ with st.sidebar.expander(
         for h in range(24)
     )
 
-    st.divider()
-
     st.metric(
         "Total de tiendas por día",
         f"{total_tiendas:,}"
@@ -295,7 +320,6 @@ with st.sidebar.expander(
 # NAVEGACIÓN
 # ==================================================
 
-st.sidebar.divider()
 st.sidebar.subheader("⚙️ GESTIÓN")
 
 pantalla = st.sidebar.radio(
@@ -307,11 +331,10 @@ pantalla = st.sidebar.radio(
     ]
 )
 
-st.sidebar.divider()
-st.sidebar.caption("Gestión de almacén | Versión 1.3")
+st.sidebar.caption("Gestión de almacén | Versión 1.4")
 
 # ==================================================
-# FUNCIONES DE PANTALLAS DIARIAS
+# PICKS POR HORA
 # ==================================================
 
 def mostrar_picks_hora(dia, indice):
@@ -364,17 +387,14 @@ def mostrar_picks_hora(dia, indice):
             for hora, valor in valores:
                 lista[hora] = valor
 
-            guardar_picks_horarios(
-                fecha,
-                lista
-            )
+            guardar_picks_horarios(fecha, lista)
 
             st.success(
                 f"Picks de {NOMBRES[indice]} guardados."
             )
 
 # ==================================================
-# RESUMEN DE UN DÍA
+# RESUMEN DIARIO
 # ==================================================
 
 def mostrar_resumen_diario(dia, indice):
@@ -459,14 +479,16 @@ def mostrar_resumen_diario(dia, indice):
 # ==================================================
 
 st.title("📦 Gestión de almacén")
+
 st.caption(
     f"Semana del {dias[0].strftime('%d/%m/%Y')} "
     f"al {dias[-1].strftime('%d/%m/%Y')}"
 )
+
 st.divider()
 
 # ==================================================
-# PICKS POR HORA
+# PANTALLA: PICKS POR HORA
 # ==================================================
 
 if pantalla == "Picks por hora":
@@ -475,7 +497,7 @@ if pantalla == "Picks por hora":
 
     st.write(
         "Registra los picks realizados de forma independiente "
-        "para cada día. Selecciona el día en las pestañas."
+        "para cada día."
     )
 
     pestañas = st.tabs([
@@ -488,7 +510,7 @@ if pantalla == "Picks por hora":
             mostrar_picks_hora(dias[i], i)
 
 # ==================================================
-# RESUMEN DIARIO
+# PANTALLA: RESUMEN DIARIO
 # ==================================================
 
 elif pantalla == "Resumen diario":
@@ -505,17 +527,17 @@ elif pantalla == "Resumen diario":
             mostrar_resumen_diario(dias[i], i)
 
 # ==================================================
-# RESUMEN SEMANAL
+# PANTALLA: RESUMEN SEMANAL
 # ==================================================
 
 elif pantalla == "Resumen semanal":
 
     st.header("📅 Resumen semanal")
 
-    registros = []
-
     datos_tiendas = obtener_tiendas_comunes()
     tiendas_diarias = sum(datos_tiendas.values())
+
+    registros = []
 
     for i, dia in enumerate(dias):
 
@@ -563,8 +585,6 @@ elif pantalla == "Resumen semanal":
     )
 
     st.progress(min(cumplimiento_semanal / 100, 1.0))
-
-    st.divider()
 
     st.subheader("Detalle de la semana")
 
