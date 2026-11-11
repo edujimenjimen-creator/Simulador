@@ -2,7 +2,7 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from contextlib import closing
 
 # ==================================================
@@ -16,11 +16,10 @@ st.set_page_config(
 )
 
 DB = "almacen.db"
-MAX_PICKS_HORA = 500
 
-NOMBRES = [
-    "Lunes", "Martes", "Miércoles",
-    "Jueves", "Viernes", "Sábado"
+DIAS_ES = [
+    "Lunes", "Martes", "Miércoles", "Jueves",
+    "Viernes", "Sábado", "Domingo"
 ]
 
 # ==================================================
@@ -29,6 +28,7 @@ NOMBRES = [
 
 def conectar():
     return sqlite3.connect(DB)
+
 
 def crear_base_datos():
     with closing(conectar()) as conn:
@@ -57,6 +57,21 @@ def crear_base_datos():
                 )
             """)
 
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS ajustes_pendientes (
+                    fecha_hora TEXT PRIMARY KEY,
+                    pendientes INTEGER DEFAULT 0
+                )
+            """)
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS configuracion (
+                    clave TEXT PRIMARY KEY,
+                    valor INTEGER
+                )
+            """)
+
+
 def obtener_servicio(fecha):
     with closing(conectar()) as conn:
         resultado = conn.execute(
@@ -65,6 +80,7 @@ def obtener_servicio(fecha):
         ).fetchone()
 
     return resultado[0] if resultado else 0
+
 
 def guardar_servicio(fecha, picks):
     with closing(conectar()) as conn:
@@ -76,38 +92,13 @@ def guardar_servicio(fecha, picks):
                 DO UPDATE SET picks=excluded.picks
             """, (fecha, picks))
 
+
 def guardar_sidebar_servicio(fecha, clave):
     guardar_servicio(
         fecha,
         int(st.session_state[clave])
     )
 
-def obtener_horas_picks(fecha):
-    with closing(conectar()) as conn:
-        filas = conn.execute("""
-            SELECT hora, picks
-            FROM horas
-            WHERE fecha=?
-        """, (fecha,)).fetchall()
-
-    datos = {h: p for h, p in filas}
-
-    for h in range(24):
-        if h not in datos:
-            datos[h] = 0
-
-    return datos
-
-def guardar_picks_horarios(fecha, valores):
-    with closing(conectar()) as conn:
-        with conn:
-            for hora, picks in enumerate(valores):
-                conn.execute("""
-                    INSERT INTO horas (fecha, hora, tiendas, picks)
-                    VALUES (?, ?, 0, ?)
-                    ON CONFLICT(fecha, hora)
-                    DO UPDATE SET picks=excluded.picks
-                """, (fecha, hora, picks))
 
 def obtener_tiendas_comunes():
     with closing(conectar()) as conn:
@@ -119,10 +110,10 @@ def obtener_tiendas_comunes():
     datos = {h: t for h, t in filas}
 
     for h in range(24):
-        if h not in datos:
-            datos[h] = 0
+        datos.setdefault(h, 0)
 
     return datos
+
 
 def guardar_tienda_sidebar(hora, clave):
     valor = int(st.session_state[clave])
@@ -136,10 +127,54 @@ def guardar_tienda_sidebar(hora, clave):
                 DO UPDATE SET tiendas=excluded.tiendas
             """, (hora, valor))
 
+
+def obtener_configuracion(clave, defecto):
+    with closing(conectar()) as conn:
+        resultado = conn.execute(
+            "SELECT valor FROM configuracion WHERE clave=?",
+            (clave,)
+        ).fetchone()
+
+    return resultado[0] if resultado else defecto
+
+
+def guardar_configuracion(clave, valor):
+    with closing(conectar()) as conn:
+        with conn:
+            conn.execute("""
+                INSERT INTO configuracion (clave, valor)
+                VALUES (?, ?)
+                ON CONFLICT(clave)
+                DO UPDATE SET valor=excluded.valor
+            """, (clave, valor))
+
+
+def obtener_ajustes():
+    with closing(conectar()) as conn:
+        filas = conn.execute("""
+            SELECT fecha_hora, pendientes
+            FROM ajustes_pendientes
+        """).fetchall()
+
+    return {fecha: pendientes for fecha, pendientes in filas}
+
+
+def guardar_ajuste(fecha_hora, pendientes):
+    with closing(conectar()) as conn:
+        with conn:
+            conn.execute("""
+                INSERT INTO ajustes_pendientes
+                    (fecha_hora, pendientes)
+                VALUES (?, ?)
+                ON CONFLICT(fecha_hora)
+                DO UPDATE SET pendientes=excluded.pendientes
+            """, (fecha_hora, pendientes))
+
+
 crear_base_datos()
 
 # ==================================================
-# ESTILO VISUAL COMPACTO
+# ESTILO
 # ==================================================
 
 st.markdown("""
@@ -152,18 +187,10 @@ st.markdown("""
         color: #17243a;
     }
 
-    div[data-testid="stMetric"] {
-        background-color: white;
-        padding: 15px;
-        border-radius: 12px;
-        border: 1px solid #e5e9f0;
-    }
-
     .block-container {
-        padding-top: 2rem;
+        padding-top: 1.5rem;
     }
 
-    /* Barra lateral más estrecha y compacta */
     [data-testid="stSidebar"] {
         min-width: 280px;
     }
@@ -172,7 +199,6 @@ st.markdown("""
         gap: 0.35rem;
     }
 
-    /* Desplegables sin separación excesiva */
     [data-testid="stSidebar"] [data-testid="stExpander"] {
         margin-top: 0 !important;
         margin-bottom: 0 !important;
@@ -184,18 +210,12 @@ st.markdown("""
         padding-bottom: 7px !important;
     }
 
-    [data-testid="stSidebar"] [data-testid="stExpander"] details {
-        border: none !important;
-    }
-
-    /* Reducir espacios de textos */
-    [data-testid="stSidebar"] .stMarkdown {
-        margin-bottom: 0 !important;
-    }
-
-    /* Ocultar separadores horizontales de la barra lateral */
     [data-testid="stSidebar"] hr {
         display: none !important;
+    }
+
+    [data-testid="stSidebar"] .stMarkdown {
+        margin-bottom: 0 !important;
     }
 
     [data-testid="stSidebar"] [data-testid="stWidgetLabel"] {
@@ -210,14 +230,8 @@ st.markdown("""
 
 if "semana" not in st.session_state:
     hoy = date.today()
-    dias_hasta_lunes = (7 - hoy.weekday()) % 7
-    st.session_state.semana = hoy + timedelta(
-        days=dias_hasta_lunes
-    )
-
-# ==================================================
-# BARRA LATERAL
-# ==================================================
+    lunes = hoy - timedelta(days=hoy.weekday())
+    st.session_state.semana = lunes
 
 st.sidebar.title("📦 ALMACÉN")
 st.sidebar.caption("Panel de control")
@@ -236,9 +250,10 @@ lunes = fecha_elegida - timedelta(
 
 st.session_state.semana = lunes
 
+# Se muestran los servicios desde el lunes hasta el lunes siguiente.
 dias = [
     lunes + timedelta(days=i)
-    for i in range(6)
+    for i in range(8)
 ]
 
 # ==================================================
@@ -249,12 +264,11 @@ with st.sidebar.expander(
     "📋 PICKS POR SERVICIO",
     expanded=False
 ):
+    st.caption("Picks totales previstos de cada día.")
 
-    st.caption("Picks previstos de cada día.")
-
-    for i, dia in enumerate(dias):
-
+    for dia in dias:
         fecha = dia.isoformat()
+        nombre_dia = DIAS_ES[dia.weekday()]
         clave = f"servicio_{fecha}"
 
         if clave not in st.session_state:
@@ -263,17 +277,17 @@ with st.sidebar.expander(
             )
 
         st.number_input(
-            f"{NOMBRES[i]} {dia.strftime('%d/%m')}",
+            f"{nombre_dia} {dia.strftime('%d/%m')}",
             min_value=0,
             max_value=1000000,
-            step=1,
+            step=100,
             key=clave,
             on_change=guardar_sidebar_servicio,
             args=(fecha, clave)
         )
 
 # ==================================================
-# CARGA DE TIENDAS COMÚN
+# CARGA DE TIENDAS POR HORA
 # ==================================================
 
 datos_tiendas = obtener_tiendas_comunes()
@@ -282,11 +296,9 @@ with st.sidebar.expander(
     "🏬 CARGA DE TIENDAS POR HORA",
     expanded=False
 ):
-
-    st.caption("Carga común para los seis días.")
+    st.caption("Carga común para todos los días.")
 
     for hora in range(24):
-
         clave = f"tienda_comun_{hora}"
 
         if clave not in st.session_state:
@@ -317,291 +329,310 @@ with st.sidebar.expander(
     )
 
 # ==================================================
-# NAVEGACIÓN
+# PRODUCTIVIDAD DE LA MÁQUINA
 # ==================================================
 
-st.sidebar.subheader("⚙️ GESTIÓN")
+st.sidebar.subheader("⚙️ PRODUCTIVIDAD")
 
-pantalla = st.sidebar.radio(
-    "Selecciona una sección",
-    [
-        "Picks por hora",
-        "Resumen diario",
-        "Resumen semanal"
-    ]
+if "productividad" not in st.session_state:
+    st.session_state.productividad = obtener_configuracion(
+        "productividad", 3000
+    )
+
+productividad = st.sidebar.slider(
+    "Picks que hace la máquina por hora",
+    min_value=1000,
+    max_value=6000,
+    step=500,
+    key="productividad"
 )
 
-st.sidebar.caption("Gestión de almacén | Versión 1.4")
+guardar_configuracion("productividad", productividad)
 
-# ==================================================
-# PICKS POR HORA
-# ==================================================
+st.sidebar.metric(
+    "Productividad establecida",
+    f"{productividad:,} picks/h"
+)
 
-def mostrar_picks_hora(dia, indice):
-
-    fecha = dia.isoformat()
-    datos = obtener_horas_picks(fecha)
-
-    st.subheader(
-        f"{NOMBRES[indice]} - {dia.strftime('%d/%m/%Y')}"
-    )
-
-    with st.form(f"form_picks_{fecha}"):
-
-        valores = []
-
-        for inicio in range(0, 24, 2):
-
-            col1, col2 = st.columns(2)
-
-            for columna, hora in zip(
-                [col1, col2],
-                [inicio, inicio + 1]
-            ):
-
-                with columna:
-
-                    valor = st.slider(
-                        f"Picks a las {hora:02d}:00",
-                        min_value=0,
-                        max_value=MAX_PICKS_HORA,
-                        value=min(
-                            int(datos[hora]),
-                            MAX_PICKS_HORA
-                        ),
-                        step=1,
-                        key=f"picks_{fecha}_{hora}"
-                    )
-
-                    valores.append((hora, int(valor)))
-
-        guardar = st.form_submit_button(
-            "💾 GUARDAR PICKS",
-            use_container_width=True
-        )
-
-        if guardar:
-
-            lista = [0] * 24
-
-            for hora, valor in valores:
-                lista[hora] = valor
-
-            guardar_picks_horarios(fecha, lista)
-
-            st.success(
-                f"Picks de {NOMBRES[indice]} guardados."
-            )
-
-# ==================================================
-# RESUMEN DIARIO
-# ==================================================
-
-def mostrar_resumen_diario(dia, indice):
-
-    fecha = dia.isoformat()
-
-    datos_picks = obtener_horas_picks(fecha)
-    datos_tiendas = obtener_tiendas_comunes()
-
-    servicio = obtener_servicio(fecha)
-
-    total_tiendas = sum(datos_tiendas.values())
-    total_picks = sum(datos_picks.values())
-
-    horas_activas = sum(
-        1 for h in range(24)
-        if datos_picks[h] > 0
-    )
-
-    media = (
-        total_picks / horas_activas
-        if horas_activas else 0
-    )
-
-    cumplimiento = (
-        total_picks / servicio * 100
-        if servicio > 0 else 0
-    )
-
-    st.subheader(
-        f"{NOMBRES[indice]} - {dia.strftime('%d/%m/%Y')}"
-    )
-
-    c1, c2, c3 = st.columns(3)
-
-    c1.metric("Picks del servicio", f"{servicio:,}")
-    c2.metric("Picks realizados", f"{total_picks:,}")
-    c3.metric("Tiendas previstas", f"{total_tiendas:,}")
-
-    c1, c2, c3 = st.columns(3)
-
-    c1.metric("Productividad media", f"{media:.1f} picks/h")
-    c2.metric("Horas activas", horas_activas)
-    c3.metric("Cumplimiento", f"{cumplimiento:.1f}%")
-
-    st.progress(min(cumplimiento / 100, 1.0))
-
-    tabla = pd.DataFrame([
-        {
-            "Hora": f"{h:02d}:00",
-            "Tiendas": datos_tiendas[h],
-            "Picks realizados": datos_picks[h]
-        }
-        for h in range(24)
-    ])
-
-    st.subheader("Detalle por hora")
-
-    st.dataframe(
-        tabla,
-        use_container_width=True,
-        hide_index=True
-    )
-
-    st.subheader("Picks realizados por hora")
-    st.bar_chart(
-        tabla.set_index("Hora")["Picks realizados"]
-    )
-
-    st.subheader("Carga de tiendas por hora")
-    st.bar_chart(
-        tabla.set_index("Hora")["Tiendas"]
-    )
-
-    st.metric(
-        "Picks pendientes respecto al servicio",
-        f"{max(servicio - total_picks, 0):,}"
-    )
+st.sidebar.caption("Gestión de almacén | Versión 2.0")
 
 # ==================================================
 # CABECERA
 # ==================================================
 
-st.title("📦 Gestión de almacén")
+st.title("📦 Planificación de picks")
 
 st.caption(
-    f"Semana del {dias[0].strftime('%d/%m/%Y')} "
-    f"al {dias[-1].strftime('%d/%m/%Y')}"
+    f"Semana de servicio: {lunes.strftime('%d/%m/%Y')} "
+    f"al {(lunes + timedelta(days=7)).strftime('%d/%m/%Y')}"
 )
 
 st.divider()
 
 # ==================================================
-# PANTALLA: PICKS POR HORA
+# SELECCIÓN DEL PERIODO
 # ==================================================
 
-if pantalla == "Picks por hora":
+st.subheader("📅 Selecciona el periodo que quieres planificar")
 
-    st.header("📊 Picks realizados por hora")
+col1, col2, col3, col4 = st.columns(4)
 
-    st.write(
-        "Registra los picks realizados de forma independiente "
-        "para cada día."
+with col1:
+    fecha_inicio = st.date_input(
+        "Desde el día",
+        value=lunes,
+        key="fecha_inicio",
+        format="DD/MM/YYYY"
     )
 
-    pestañas = st.tabs([
-        f"{NOMBRES[i]} {dia.strftime('%d/%m')}"
-        for i, dia in enumerate(dias)
-    ])
+with col2:
+    hora_inicio = st.selectbox(
+        "Desde la hora",
+        range(24),
+        index=0,
+        format_func=lambda h: f"{h:02d}:00",
+        key="hora_inicio"
+    )
 
-    for i, pestaña in enumerate(pestañas):
-        with pestaña:
-            mostrar_picks_hora(dias[i], i)
+with col3:
+    fecha_fin = st.date_input(
+        "Hasta el día",
+        value=lunes + timedelta(days=7),
+        key="fecha_fin",
+        format="DD/MM/YYYY"
+    )
+
+with col4:
+    hora_fin = st.selectbox(
+        "Hasta la hora",
+        range(24),
+        index=23,
+        format_func=lambda h: f"{h:02d}:00",
+        key="hora_fin"
+    )
+
+inicio = datetime.combine(
+    fecha_inicio,
+    datetime.min.time()
+).replace(hour=hora_inicio)
+
+fin = datetime.combine(
+    fecha_fin,
+    datetime.min.time()
+).replace(hour=hora_fin)
+
+if fin < inicio:
+    st.error("La fecha y hora final debe ser posterior a la inicial.")
+    st.stop()
 
 # ==================================================
-# PANTALLA: RESUMEN DIARIO
+# CÁLCULO DE LA PREVISIÓN
 # ==================================================
 
-elif pantalla == "Resumen diario":
+tiendas = obtener_tiendas_comunes()
+ajustes = obtener_ajustes()
 
-    st.header("📈 Resumen diario")
+# Calculamos desde el comienzo de la semana para conservar
+# el saldo acumulado aunque la consulta empiece más tarde.
 
-    pestañas = st.tabs([
-        f"{NOMBRES[i]} {dia.strftime('%d/%m')}"
-        for i, dia in enumerate(dias)
-    ])
+fecha_calculo = min(
+    inicio.date(),
+    lunes
+)
 
-    for i, pestaña in enumerate(pestañas):
-        with pestaña:
-            mostrar_resumen_diario(dias[i], i)
+momento = datetime.combine(
+    fecha_calculo,
+    datetime.min.time()
+)
 
-# ==================================================
-# PANTALLA: RESUMEN SEMANAL
-# ==================================================
+registros = []
+saldo = 0
 
-elif pantalla == "Resumen semanal":
+while momento <= fin:
 
-    st.header("📅 Resumen semanal")
+    fecha = momento.date()
+    hora = momento.hour
+    fecha_texto = fecha.isoformat()
+    clave_momento = momento.strftime("%Y-%m-%d %H:%M")
 
-    datos_tiendas = obtener_tiendas_comunes()
-    tiendas_diarias = sum(datos_tiendas.values())
+    picks_servicio = obtener_servicio(fecha_texto)
 
-    registros = []
+    total_tiendas_dia = sum(tiendas.values())
 
-    for i, dia in enumerate(dias):
+    tiendas_hora = int(tiendas[hora])
 
-        fecha = dia.isoformat()
-
-        servicio = obtener_servicio(fecha)
-        datos_picks = obtener_horas_picks(fecha)
-
-        picks = sum(datos_picks.values())
-
-        cumplimiento = (
-            picks / servicio * 100
-            if servicio > 0 else 0
+    if total_tiendas_dia > 0:
+        picks_por_tienda = (
+            picks_servicio / total_tiendas_dia
         )
+    else:
+        picks_por_tienda = 0
 
-        registros.append({
-            "Día": NOMBRES[i],
-            "Fecha": dia.strftime("%d/%m"),
-            "Servicio": servicio,
-            "Tiendas": tiendas_diarias,
-            "Picks realizados": picks,
-            "Cumplimiento (%)": round(cumplimiento, 1)
-        })
-
-    tabla = pd.DataFrame(registros)
-
-    total_servicio = tabla["Servicio"].sum()
-    total_tiendas_semana = tiendas_diarias * 6
-    total_picks = tabla["Picks realizados"].sum()
-
-    cumplimiento_semanal = (
-        total_picks / total_servicio * 100
-        if total_servicio > 0 else 0
+    picks_previstos = round(
+        picks_por_tienda * tiendas_hora
     )
 
-    c1, c2, c3 = st.columns(3)
-
-    c1.metric("Picks previstos", f"{total_servicio:,}")
-    c2.metric("Picks realizados", f"{total_picks:,}")
-    c3.metric("Tiendas semanales", f"{total_tiendas_semana:,}")
-
-    st.metric(
-        "Cumplimiento semanal",
-        f"{cumplimiento_semanal:.1f}%"
+    # Saldo acumulado de la hora anterior
+    saldo_calculado = (
+        saldo + picks_previstos - productividad
     )
 
-    st.progress(min(cumplimiento_semanal / 100, 1.0))
+    # Si existe un ajuste manual, sustituye el saldo calculado.
+    if clave_momento in ajustes:
+        saldo = int(ajustes[clave_momento])
+    else:
+        saldo = saldo_calculado
 
-    st.subheader("Detalle de la semana")
+    registros.append({
+        "fecha_hora": clave_momento,
+        "Fecha y hora": momento.strftime("%d/%m %H:%M"),
+        "Tiendas": tiendas_hora,
+        "Picks previstos": int(picks_previstos),
+        "Productividad": int(productividad),
+        "Pendientes": int(saldo)
+    })
 
-    st.dataframe(
-        tabla,
-        use_container_width=True,
-        hide_index=True
-    )
+    momento += timedelta(hours=1)
 
-    st.subheader("Comparativa de picks por día")
+# ==================================================
+# MOSTRAR SOLO EL INTERVALO SELECCIONADO
+# ==================================================
 
-    grafico = tabla.set_index("Día")[
-        ["Servicio", "Picks realizados"]
+registros_visibles = [
+    r for r in registros
+    if inicio <= datetime.strptime(
+        r["fecha_hora"], "%Y-%m-%d %H:%M"
+    ) <= fin
+]
+
+if not registros_visibles:
+    st.info("No hay horas que mostrar en este intervalo.")
+    st.stop()
+
+st.subheader("📊 PICKS POR HACER")
+
+st.caption(
+    "Los pendientes se acumulan de una hora a otra. "
+    "Si la máquina produce más de lo previsto, "
+    "el adelanto se descuenta de las horas siguientes."
+)
+
+df = pd.DataFrame(registros_visibles)
+
+# Valores calculados originales para detectar modificaciones.
+valores_originales = df["Pendientes"].tolist()
+
+df_edicion = df[
+    [
+        "Fecha y hora",
+        "Tiendas",
+        "Picks previstos",
+        "Productividad",
+        "Pendientes"
     ]
+].copy()
 
-    st.bar_chart(grafico)
+st.write(
+    "Puedes modificar directamente la columna "
+    "**Pendientes** para ajustar la previsión."
+)
+
+df_editado = st.data_editor(
+    df_edicion,
+    use_container_width=True,
+    hide_index=True,
+    num_rows="fixed",
+    disabled=[
+        "Fecha y hora",
+        "Tiendas",
+        "Picks previstos",
+        "Productividad"
+    ],
+    column_config={
+        "Fecha y hora": st.column_config.TextColumn(
+            "Fecha y hora",
+            width="medium"
+        ),
+        "Tiendas": st.column_config.NumberColumn(
+            "Tiendas",
+            format="%d"
+        ),
+        "Picks previstos": st.column_config.NumberColumn(
+            "Picks previstos",
+            format="%d"
+        ),
+        "Productividad": st.column_config.NumberColumn(
+            "Productividad",
+            format="%d"
+        ),
+        "Pendientes": st.column_config.NumberColumn(
+            "Pendientes / adelanto",
+            format="%d",
+            help="Puedes cambiar este valor manualmente."
+        )
+    },
+    key="tabla_planificacion"
+)
 
 # ==================================================
-# FIN
+# GUARDAR AJUSTES MANUALES
 # ==================================================
+
+if st.button(
+    "💾 GUARDAR CAMBIOS DE PENDIENTES",
+    type="primary",
+    use_container_width=True
+):
+    cambios = 0
+
+    for i, fila in df_editado.iterrows():
+        nuevo_valor = int(fila["Pendientes"])
+        valor_original = int(valores_originales[i])
+
+        if nuevo_valor != valor_original:
+            fecha_hora = df.iloc[i]["fecha_hora"]
+
+            guardar_ajuste(
+                fecha_hora,
+                nuevo_valor
+            )
+
+            cambios += 1
+
+    if cambios > 0:
+        st.success(
+            f"Se han guardado {cambios} ajustes. "
+            "La previsión se actualizará con los nuevos saldos."
+        )
+        st.rerun()
+    else:
+        st.info("No has realizado ningún cambio.")
+
+# ==================================================
+# RESUMEN
+# ==================================================
+
+st.divider()
+st.subheader("📌 Resumen del periodo")
+
+total_previsto = int(df["Picks previstos"].sum())
+ultimo_saldo = int(df["Pendientes"].iloc[-1])
+
+c1, c2, c3 = st.columns(3)
+
+c1.metric(
+    "Picks previstos en el periodo",
+    f"{total_previsto:,}"
+)
+
+c2.metric(
+    "Productividad por hora",
+    f"{productividad:,}"
+)
+
+c3.metric(
+    "Saldo al final del periodo",
+    f"{ultimo_saldo:,}",
+    help="Un saldo positivo indica picks pendientes. "
+         "Uno negativo indica que vas adelantado."
+)
