@@ -3,6 +3,7 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import date, timedelta
+from contextlib import closing
 
 # ==================================================
 # CONFIGURACIÓN
@@ -25,26 +26,27 @@ def conectar():
     return sqlite3.connect(DB)
 
 def crear_base_datos():
-    with conectar() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS servicios (
-                fecha TEXT PRIMARY KEY,
-                picks INTEGER DEFAULT 0
-            )
-        """)
+    with closing(conectar()) as conn:
+        with conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS servicios (
+                    fecha TEXT PRIMARY KEY,
+                    picks INTEGER DEFAULT 0
+                )
+            """)
 
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS horas (
-                fecha TEXT,
-                hora INTEGER,
-                tiendas INTEGER DEFAULT 0,
-                picks INTEGER DEFAULT 0,
-                PRIMARY KEY (fecha, hora)
-            )
-        """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS horas (
+                    fecha TEXT,
+                    hora INTEGER,
+                    tiendas INTEGER DEFAULT 0,
+                    picks INTEGER DEFAULT 0,
+                    PRIMARY KEY (fecha, hora)
+                )
+            """)
 
 def obtener_servicio(fecha):
-    with conectar() as conn:
+    with closing(conectar()) as conn:
         resultado = conn.execute(
             "SELECT picks FROM servicios WHERE fecha=?",
             (fecha,)
@@ -53,20 +55,21 @@ def obtener_servicio(fecha):
     return resultado[0] if resultado else 0
 
 def guardar_servicio(fecha, picks):
-    with conectar() as conn:
-        conn.execute("""
-            INSERT INTO servicios (fecha, picks)
-            VALUES (?, ?)
-            ON CONFLICT(fecha)
-            DO UPDATE SET picks=excluded.picks
-        """, (fecha, picks))
+    with closing(conectar()) as conn:
+        with conn:
+            conn.execute("""
+                INSERT INTO servicios (fecha, picks)
+                VALUES (?, ?)
+                ON CONFLICT(fecha)
+                DO UPDATE SET picks=excluded.picks
+            """, (fecha, picks))
 
 def guardar_sidebar(fecha, clave):
     valor = int(st.session_state[clave])
     guardar_servicio(fecha, valor)
 
 def obtener_horas(fecha):
-    with conectar() as conn:
+    with closing(conectar()) as conn:
         filas = conn.execute("""
             SELECT hora, tiendas, picks
             FROM horas
@@ -88,33 +91,34 @@ def obtener_horas(fecha):
     return datos
 
 def guardar_horas(fecha, tipo, valores):
-    with conectar() as conn:
+    with closing(conectar()) as conn:
+        with conn:
 
-        for hora, valor in enumerate(valores):
+            for hora, valor in enumerate(valores):
 
-            fila = conn.execute("""
-                SELECT tiendas, picks
-                FROM horas
-                WHERE fecha=? AND hora=?
-            """, (fecha, hora)).fetchone()
+                fila = conn.execute("""
+                    SELECT tiendas, picks
+                    FROM horas
+                    WHERE fecha=? AND hora=?
+                """, (fecha, hora)).fetchone()
 
-            tiendas = fila[0] if fila else 0
-            picks = fila[1] if fila else 0
+                tiendas = fila[0] if fila else 0
+                picks = fila[1] if fila else 0
 
-            if tipo == "tiendas":
-                tiendas = valor
-            else:
-                picks = valor
+                if tipo == "tiendas":
+                    tiendas = valor
+                else:
+                    picks = valor
 
-            conn.execute("""
-                INSERT INTO horas
-                (fecha, hora, tiendas, picks)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(fecha, hora)
-                DO UPDATE SET
-                    tiendas=excluded.tiendas,
-                    picks=excluded.picks
-            """, (fecha, hora, tiendas, picks))
+                conn.execute("""
+                    INSERT INTO horas
+                    (fecha, hora, tiendas, picks)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(fecha, hora)
+                    DO UPDATE SET
+                        tiendas=excluded.tiendas,
+                        picks=excluded.picks
+                """, (fecha, hora, tiendas, picks))
 
 crear_base_datos()
 
@@ -161,6 +165,7 @@ nombres = [
 if "semana" not in st.session_state:
     hoy = date.today()
     dias_hasta_lunes = (7 - hoy.weekday()) % 7
+
     st.session_state.semana = hoy + timedelta(
         days=dias_hasta_lunes
     )
@@ -182,6 +187,7 @@ fecha_elegida = st.sidebar.date_input(
     format="DD/MM/YYYY"
 )
 
+# Ajustar fecha al lunes de esa semana
 lunes = fecha_elegida - timedelta(
     days=fecha_elegida.weekday()
 )
@@ -195,48 +201,42 @@ dias = [
 
 st.sidebar.divider()
 
-st.sidebar.subheader("📋 PICKS POR SERVICIO")
+# ==================================================
+# PICKS POR SERVICIO PLEGABLES
+# ==================================================
 
-st.sidebar.caption(
-    "Introduce los picks previstos para cada día. "
-    "Se guardan automáticamente."
-)
+with st.sidebar.expander(
+    "📋 PICKS POR SERVICIO",
+    expanded=False
+):
 
-# Campos de picks siempre visibles
+    st.caption(
+        "Introduce los picks previstos de cada día. "
+        "Se guardan automáticamente."
+    )
 
-for i, dia in enumerate(dias):
+    for i, dia in enumerate(dias):
 
-    fecha = dia.isoformat()
-    nombre = nombres[i]
-    clave = f"sidebar_picks_{fecha}"
+        fecha = dia.isoformat()
+        nombre = nombres[i]
+        clave = f"sidebar_picks_{fecha}"
 
-    valor_guardado = obtener_servicio(fecha)
+        valor_guardado = obtener_servicio(fecha)
 
-    if clave not in st.session_state:
-        st.session_state[clave] = int(valor_guardado)
+        if clave not in st.session_state:
+            st.session_state[clave] = int(valor_guardado)
 
-    col_dia, col_picks = st.sidebar.columns([2, 1])
-
-    with col_dia:
-        st.markdown(
-            f"**{nombre}**",
-            help=dia.strftime("%d/%m/%Y")
-        )
-        st.caption(dia.strftime("%d/%m"))
-
-    with col_picks:
         st.number_input(
-            f"Picks {nombre}",
+            f"{nombre} {dia.strftime('%d/%m')}",
             min_value=0,
             max_value=1000000,
             step=1,
             key=clave,
-            label_visibility="collapsed",
             on_change=guardar_sidebar,
             args=(fecha, clave)
         )
 
-    st.sidebar.divider()
+st.sidebar.divider()
 
 # ==================================================
 # NAVEGACIÓN
@@ -254,8 +254,6 @@ pantalla = st.sidebar.radio(
     ]
 )
 
-# Día seleccionado en la barra lateral
-
 dia_seleccionado = st.sidebar.selectbox(
     "Día que quieres consultar",
     nombres
@@ -267,7 +265,7 @@ fecha_actual = dias[indice_dia].isoformat()
 st.sidebar.divider()
 
 st.sidebar.caption(
-    "Gestión de almacén | Versión 1.0"
+    "Gestión de almacén | Versión 1.1"
 )
 
 # ==================================================
@@ -353,8 +351,8 @@ elif pantalla == "Picks por hora":
     st.header("📊 Picks realizados por hora")
 
     st.write(
-        "Desliza cada barra para indicar cuántos "
-        "picks has realizado en cada hora."
+        "Utiliza los deslizadores para indicar "
+        "cuántos picks has realizado en cada hora."
     )
 
     datos = obtener_horas(fecha_actual)
@@ -417,7 +415,6 @@ elif pantalla == "Resumen diario":
     st.header("📈 Resumen diario")
 
     datos = obtener_horas(fecha_actual)
-
     servicio = obtener_servicio(fecha_actual)
 
     total_tiendas = sum(
@@ -477,6 +474,10 @@ elif pantalla == "Resumen diario":
         f"{cumplimiento:.1f}%"
     )
 
+    st.progress(
+        min(cumplimiento / 100, 1.0)
+    )
+
     st.divider()
 
     st.subheader("Detalle por hora")
@@ -523,7 +524,7 @@ elif pantalla == "Resumen semanal":
 
     registros = []
 
-    for dia in dias:
+    for i, dia in enumerate(dias):
 
         fecha = dia.isoformat()
 
@@ -544,7 +545,7 @@ elif pantalla == "Resumen semanal":
         )
 
         registros.append({
-            "Día": nombres[dias.index(dia)],
+            "Día": nombres[i],
             "Fecha": dia.strftime("%d/%m"),
             "Servicio": servicio,
             "Tiendas": tiendas,
@@ -565,13 +566,28 @@ elif pantalla == "Resumen semanal":
 
     c1, c2, c3 = st.columns(3)
 
-    c1.metric("Picks previstos", f"{total_servicio:,}")
-    c2.metric("Picks realizados", f"{total_picks:,}")
-    c3.metric("Tiendas", f"{total_tiendas:,}")
+    c1.metric(
+        "Picks previstos",
+        f"{total_servicio:,}"
+    )
+
+    c2.metric(
+        "Picks realizados",
+        f"{total_picks:,}"
+    )
+
+    c3.metric(
+        "Tiendas",
+        f"{total_tiendas:,}"
+    )
 
     st.metric(
         "Cumplimiento semanal",
         f"{cumplimiento_semanal:.1f}%"
+    )
+
+    st.progress(
+        min(cumplimiento_semanal / 100, 1.0)
     )
 
     st.divider()
@@ -593,5 +609,5 @@ elif pantalla == "Resumen semanal":
     st.bar_chart(grafico)
 
 # ==================================================
-# FIN
+# FIN DE LA APLICACIÓN
 # ==================================================
