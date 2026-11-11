@@ -151,22 +151,19 @@ def guardar_ediciones(editor_key):
         []
     )
 
-    for indice, valores in cambios.items():
+    # El desplegable de la primera fila determina
+    # el primer día de servicio.
+    if "0" in cambios or 0 in cambios:
 
-        indice = int(indice)
+        valores_primera_fila = cambios.get(
+            "0", cambios.get(0, {})
+        )
 
-        if indice >= len(referencias):
-            continue
-
-        referencia = referencias[indice]
-
-        # El desplegable de la primera fila determina
-        # el primer día de servicio.
-        if indice == 0 and "Día de servicio" in valores:
+        if "Día de servicio" in valores_primera_fila:
 
             try:
                 fecha_elegida = datetime.strptime(
-                    valores["Día de servicio"],
+                    valores_primera_fila["Día de servicio"],
                     "%d/%m/%Y"
                 ).date()
 
@@ -177,35 +174,74 @@ def guardar_ediciones(editor_key):
             except ValueError:
                 pass
 
-        # Guardar las modificaciones manuales de picks.
-        if "Picks restantes" in valores:
+    # Recoger las celdas de picks modificadas.
+    ediciones_picks = []
 
-            if referencia["estado"] == "Fin de servicio":
-                continue
+    for indice, valores in cambios.items():
 
-            pendientes = max(
-                0,
-                int(valores["Picks restantes"])
-            )
+        if "Picks restantes" not in valores:
+            continue
 
-            with closing(conectar()) as conn:
+        indice = int(indice)
 
-                with conn:
-                    conn.execute("""
-                        INSERT INTO ajustes_planificacion (
-                            fecha_hora,
-                            fecha_servicio,
-                            pendientes
-                        )
-                        VALUES (?, ?, ?)
-                        ON CONFLICT(fecha_hora, fecha_servicio)
-                        DO UPDATE SET pendientes=excluded.pendientes
-                    """, (
-                        referencia["fecha_hora"],
-                        referencia["fecha_servicio"],
+        if indice >= len(referencias):
+            continue
+
+        referencia = referencias[indice]
+
+        if referencia["estado"] == "Fin de servicio":
+            continue
+
+        fecha_hora = referencia["fecha_hora"]
+        fecha_servicio = referencia["fecha_servicio"]
+
+        pendientes = max(
+            0,
+            int(valores["Picks restantes"])
+        )
+
+        ediciones_picks.append((
+            fecha_hora,
+            fecha_servicio,
+            pendientes
+        ))
+
+    if ediciones_picks:
+
+        # La edición más temprana es el nuevo punto manual.
+        ediciones_picks.sort(key=lambda x: x[0])
+
+        fecha_hora, fecha_servicio, pendientes = (
+            ediciones_picks[0]
+        )
+
+        with closing(conectar()) as conn:
+            with conn:
+
+                # Borrar todos los ajustes desde ese instante.
+                # Así los valores posteriores se recalculan.
+                conn.execute("""
+                    DELETE FROM ajustes_planificacion
+                    WHERE fecha_hora >= ?
+                """, (fecha_hora,))
+
+                # Guardar únicamente el nuevo punto manual.
+                conn.execute("""
+                    INSERT INTO ajustes_planificacion (
+                        fecha_hora,
+                        fecha_servicio,
                         pendientes
-                    ))
+                    )
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(fecha_hora, fecha_servicio)
+                    DO UPDATE SET pendientes=excluded.pendientes
+                """, (
+                    fecha_hora,
+                    fecha_servicio,
+                    pendientes
+                ))
 
+    # Forzar una tabla nueva.
     st.session_state.version_tabla += 1
 
 
@@ -473,7 +509,8 @@ def calcular_planificacion(
                 terminado = True
                 break
 
-            # Aplicar cualquier ajuste manual guardado en este instante.
+            # Aplicar cualquier ajuste manual guardado
+            # exactamente en este momento.
             clave_ajuste = (
                 cursor.strftime("%Y-%m-%d %H:%M:%S"),
                 fecha_servicio
@@ -659,7 +696,7 @@ else:
                 "estado": fila["Estado"]
             })
 
-        # Identificar qué filas tienen un ajuste manual guardado.
+        # Identificar los ajustes manuales que siguen vigentes.
         ajustes = obtener_ajustes()
 
         indices_rojos = set()
@@ -762,10 +799,6 @@ else:
         # --------------------------------------------------
         # EDITOR DE TABLA
         # --------------------------------------------------
-
-        editor_key = (
-            f"tabla_planificacion_{st.session_state.version_tabla}"
-        )
 
         st.data_editor(
             tabla_estilizada,
