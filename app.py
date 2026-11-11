@@ -1,668 +1,577 @@
-import json
-import os
-import numpy as np
-import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import streamlit as st
 
-# ==========================================
-# 0. PERSISTENCIA EN RUTA COMPARTIDA CON GESTIÓN Y BORRADO DE ESCENARIOS
-# ==========================================
-RUTA_COMPARTIDA = os.path.join(os.environ.get("PUBLIC", "C:\\Users\\Public"), "OPM_Config")
+import tkinter as tk
+from tkinter import ttk, messagebox
+import sqlite3
+from datetime import date, timedelta
 
-if not os.path.exists(RUTA_COMPARTIDA):
-    try:
-        os.makedirs(RUTA_COMPARTIDA, exist_ok=True)
-    except Exception:
-        RUTA_COMPARTIDA = "."
+# --------------------------------
+# CONFIGURACIÓN Y BASE DE DATOS
+# --------------------------------
 
-st.set_page_config(page_title="OPM - Planificación Semanal", layout="wide")
-st.title("🏭 OPM: Planificación semanal")
+DB = "almacen.db"
 
-# ==========================================
-# GESTOR DE ESCENARIOS (SELECCIÓN, NUEVO Y BORRADO)
-# ==========================================
-st.sidebar.header("📁 Gestión de Escenarios")
+conexion = sqlite3.connect(DB)
+cursor = conexion.cursor()
 
-try:
-    archivos_existentes = [f.replace(".json", "") for f in os.listdir(RUTA_COMPARTIDA) if f.endswith(".json")]
-except Exception:
-    archivos_existentes = []
-
-if not archivos_existentes:
-    archivos_existentes = ["config_opm"]
-
-col_esc1, col_esc2 = st.sidebar.columns([2, 1])
-with col_esc1:
-    escenario_seleccionado = st.selectbox("Seleccionar Escenario:", archivos_existentes, index=0)
-with col_esc2:
-    nuevo_nombre = st.text_input("Nuevo:", value="", placeholder="Ej: Semana_2")
-
-if nuevo_nombre.strip():
-    nombre_archivo_activo = nuevo_nombre.strip() + ".json"
-else:
-    nombre_archivo_activo = escenario_seleccionado + ".json"
-
-CONFIG_FILE = os.path.join(RUTA_COMPARTIDA, nombre_archivo_activo)
-
-# --- BOTÓN PARA BORRAR EL ESCENARIO ACTUAL ---
-if len(archivos_existentes) > 1 and not nuevo_nombre.strip():
-    if st.sidebar.button("🗑️ Borrar este escenario", type="secondary"):
-        try:
-            if os.path.exists(CONFIG_FILE):
-                os.remove(CONFIG_FILE)
-                st.sidebar.success(f"Escenario '{escenario_seleccionado}' borrado.")
-                st.rerun()
-        except Exception as e:
-            st.sidebar.error(f"No se pudo borrar: {e}")
-
-def cargar_configuracion():
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
-
-def guardar_configuracion(config):
-    try:
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        st.sidebar.error(f"Error al guardar escenario: {e}")
-
-config_guardada = cargar_configuracion()
-
-# ==========================================
-# 1. PARÁMETROS CONFIGURABLES (VÍA SIDEBAR)
-# ==========================================
-st.sidebar.header("⚙ Parámetros del Sistema")
-
-val_capacidad = config_guardada.get("CAPACIDAD_PLAYA", 45000)
-CAPACIDAD_PLAYA = st.sidebar.slider(
-    "Capacidad Máxima de la Playa (Picks)",
-    min_value=10000,
-    max_value=100000,
-    value=val_capacidad,
-    step=5000,
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS servicios (
+    fecha TEXT PRIMARY KEY,
+    picks INTEGER DEFAULT 0
 )
+""")
 
-val_vel = config_guardada.get("vel_maquina", 4500)
-vel_maquina = st.sidebar.number_input(
-    "Velocidad de Máquina (Picks/hora)",
-    min_value=1000,
-    max_value=20000,
-    value=val_vel,
-    step=500,
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS horas (
+    fecha TEXT,
+    hora INTEGER,
+    tiendas INTEGER DEFAULT 0,
+    picks INTEGER DEFAULT 0,
+    PRIMARY KEY (fecha, hora)
 )
+""")
 
-dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+conexion.commit()
 
-horas_arranque_guardadas = config_guardada.get("horas_arranque_por_dia", {})
-horas_fin_guardadas = config_guardada.get("horas_fin_por_dia", {})
+# Semana de servicio
+lunes = date(2026, 11, 16)
+dias = [
+    (lunes + timedelta(days=i)) for i in range(6)
+]
 
-with st.sidebar.expander("⏰ Horarios de Inicio y Fin por Día"):
-    horas_arranque_por_dia = {}
-    horas_fin_por_dia = {}
-    
-    for dia in dias_semana:
-        st.markdown(f"**{dia}**")
-        val_arranque = horas_arranque_guardadas.get(dia, 18 if dia == "Lunes" else 6)
-        val_fin = horas_fin_guardadas.get(dia, 24)
+# --------------------------------
+# APLICACIÓN
+# --------------------------------
 
-        st.markdown("<span style='color: #2e7d32; font-weight: bold;'>🟢 Hora Inicio</span>", unsafe_allow_html=True)
-        horas_arranque_por_dia[dia] = st.slider(
-            f"Inicio {dia}",
-            min_value=0,
-            max_value=24,
-            value=int(val_arranque),
-            step=1,
-            key=f"arranque_{dia}",
-            label_visibility="collapsed"
+class AlmacenApp:
+
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Gestión de Almacén")
+        self.root.geometry("1150x800")
+        self.root.minsize(900, 650)
+
+        self.fecha_actual = dias[0].isoformat()
+        self.pantalla = "servicio"
+
+        self.store_vars = []
+        self.pick_vars = []
+        self.daily_var = tk.StringVar()
+
+        self.crear_interfaz()
+        self.mostrar_servicio()
+
+    # --------------------------------
+    # INTERFAZ PRINCIPAL
+    # --------------------------------
+
+    def crear_interfaz(self):
+
+        self.root.configure(bg="#f1f4f8")
+
+        self.sidebar = tk.Frame(
+            self.root,
+            bg="#17243a",
+            width=250
+        )
+        self.sidebar.pack(side="left", fill="y")
+        self.sidebar.pack_propagate(False)
+
+        tk.Label(
+            self.sidebar,
+            text="ALMACÉN",
+            font=("Arial", 22, "bold"),
+            bg="#17243a",
+            fg="white"
+        ).pack(pady=(30, 25))
+
+        tk.Label(
+            self.sidebar,
+            text="DÍAS DE SERVICIO",
+            font=("Arial", 10, "bold"),
+            bg="#17243a",
+            fg="#9eacc1"
+        ).pack(anchor="w", padx=20, pady=10)
+
+        for d in dias:
+            texto = d.strftime("%A %d/%m")
+            nombres = {
+                "Monday": "Lunes",
+                "Tuesday": "Martes",
+                "Wednesday": "Miércoles",
+                "Thursday": "Jueves",
+                "Friday": "Viernes",
+                "Saturday": "Sábado"
+            }
+            texto = texto.replace(
+                d.strftime("%A"),
+                nombres[d.strftime("%A")]
+            )
+
+            tk.Button(
+                self.sidebar,
+                text=texto,
+                font=("Arial", 11),
+                bg="#253750",
+                fg="white",
+                activebackground="#3d587b",
+                activeforeground="white",
+                relief="flat",
+                anchor="w",
+                padx=18,
+                pady=12,
+                command=lambda fecha=d: self.seleccionar_dia(fecha)
+            ).pack(fill="x", padx=12, pady=3)
+
+        tk.Label(
+            self.sidebar,
+            text="GESTIÓN HORARIA",
+            font=("Arial", 10, "bold"),
+            bg="#17243a",
+            fg="#9eacc1"
+        ).pack(anchor="w", padx=20, pady=(35, 10))
+
+        self.boton(
+            "Tiendas por hora",
+            self.mostrar_tiendas
         )
 
-        st.markdown("<span style='color: #c62828; font-weight: bold;'>🔴 Hora Fin</span>", unsafe_allow_html=True)
-        horas_fin_por_dia[dia] = st.slider(
-            f"Fin {dia}",
-            min_value=0,
-            max_value=24,
-            value=int(val_fin),
-            step=1,
-            key=f"fin_{dia}",
-            label_visibility="collapsed"
-        )
-        st.markdown("---")
-
-demanda_guardada = config_guardada.get("demanda_servicio_por_dia", {
-    "Lunes": 41347, "Martes": 37881, "Miércoles": 37694, 
-    "Jueves": 50694, "Viernes": 64604, "Sábado": 54360
-})
-
-with st.sidebar.expander("📅 Demanda Diaria de Servicio (Picks)"):
-    demanda_servicio_por_dia = {}
-    for dia in dias_semana:
-        demanda_servicio_por_dia[dia] = st.number_input(
-            dia, 
-            min_value=10000, 
-            max_value=200000, 
-            value=int(demanda_guardada.get(dia, 40000)), 
-            step=1000,
-            key=f"demanda_{dia}"
+        self.boton(
+            "Picks por hora",
+            self.mostrar_picks
         )
 
-with st.sidebar.expander("🕒 Perfil Horario de Tiendas (24h)"):
-    default_tiendas = [1, 3, 3, 3, 3, 0, 0, 0, 0, 8, 19, 9, 9, 2, 2, 0, 3, 7, 12, 4, 1, 0, 0, 0]
-    tiendas_guardadas = config_guardada.get("tiendas_por_hora", default_tiendas)
-    tiendas_por_hora = []
-    for h in range(24):
-        val_t = tiendas_guardadas[h] if h < len(tiendas_guardadas) else default_tiendas[h]
-        val = st.number_input(f"Hora {h:02d}:00", min_value=0, max_value=100, value=int(val_t), key=f"tienda_h_{h}")
-        tiendas_por_hora.append(val)
-
-with st.sidebar.expander("🛠️ Control de Stocks Reales (Inicio / Cierres)"):
-    stock_inicio_lunes_guardado = config_guardada.get("stock_inicio_lunes", 40552)
-    stock_inicio_lunes = st.number_input(
-        "Stock inicial real Lunes (00:00)",
-        min_value=0,
-        max_value=200000,
-        value=int(stock_inicio_lunes_guardado),
-        step=1000,
-        key="num_stock_inicio_lunes"
-    )
-    st.markdown("---")
-
-    corregir_cierres_guardado = config_guardada.get("corregir_cierres", {})
-    stocks_reales_guardados = config_guardada.get("stocks_reales_cierre", {})
-    
-    corregir_cierres_por_dia = {}
-    stocks_reales_cierre = {}
-    
-    for dia in dias_semana:
-        st.markdown(f"**{dia}**")
-        chk_val = corregir_cierres_guardado.get(dia, False)
-        stock_val = stocks_reales_guardados.get(dia, 30000)
-        
-        corregir_cierres_por_dia[dia] = st.checkbox(f"Ajustar cierre {dia}", value=chk_val, key=f"chk_cierre_{dia}")
-        stocks_reales_cierre[dia] = st.number_input(
-            f"Stock real 23:00 ({dia})",
-            min_value=0,
-            max_value=200000,
-            value=int(stock_val),
-            step=1000,
-            key=f"num_stock_cierre_{dia}"
+        self.contenido = tk.Frame(
+            self.root,
+            bg="#f1f4f8"
         )
-        st.markdown("---")
+        self.contenido.pack(
+            side="right",
+            fill="both",
+            expand=True
+        )
 
-nueva_config = {
-    "CAPACIDAD_PLAYA": CAPACIDAD_PLAYA,
-    "vel_maquina": vel_maquina,
-    "horas_arranque_por_dia": horas_arranque_por_dia,
-    "horas_fin_por_dia": horas_fin_por_dia,
-    "demanda_servicio_por_dia": demanda_servicio_por_dia,
-    "tiendas_por_hora": tiendas_por_hora,
-    "stock_inicio_lunes": stock_inicio_lunes,
-    "corregir_cierres": corregir_cierres_por_dia,
-    "stocks_reales_cierre": stocks_reales_cierre
-}
-guardar_configuracion(nueva_config)
+    def boton(self, texto, funcion):
+        tk.Button(
+            self.sidebar,
+            text=texto,
+            font=("Arial", 11),
+            bg="#253750",
+            fg="white",
+            activebackground="#3d587b",
+            activeforeground="white",
+            relief="flat",
+            anchor="w",
+            padx=18,
+            pady=12,
+            command=funcion
+        ).pack(fill="x", padx=12, pady=3)
 
-horas_24 = [f"{h:02d}:00" for h in range(24)]
+    def limpiar(self):
+        for widget in self.contenido.winfo_children():
+            widget.destroy()
 
-if sum(tiendas_por_hora) == 0:
-    st.error("⚠ El perfil horario de tiendas no puede sumar cero.")
-    st.stop()
+    def titulo(self, texto):
+        tk.Label(
+            self.contenido,
+            text=texto,
+            font=("Arial", 23, "bold"),
+            bg="#f1f4f8",
+            fg="#17243a"
+        ).pack(anchor="w", padx=35, pady=(30, 20))
 
-# ==========================================
-# 2. PREPARACIÓN DE DEMANDA Y TIENDAS HORA A HORA (144h)
-# ==========================================
-demanda_h_144 = []
-tiendas_h_144 = []
-for dia in dias_semana:
-    dem_total = demanda_servicio_por_dia[dia]
-    suma_t = sum(tiendas_por_hora)
-    factor = dem_total / suma_t if suma_t > 0 else 0
-    
-    dem_h = [round(t * factor) for t in tiendas_por_hora]
-    demanda_h_144.extend(dem_h)
-    tiendas_h_144.extend(tiendas_por_hora)
+    def fecha_texto(self):
+        return date.fromisoformat(
+            self.fecha_actual
+        ).strftime("%d/%m/%Y")
 
-# ==========================================
-# 3. MOTOR DE PRODUCCIÓN AUTÓNOMO (PRODUCCIÓN AL FINALIZAR CADA HORA)
-# ==========================================
-stock_actual = float(stock_inicio_lunes)  
-demanda_acumulada = 0
-produccion_acumulada = float(stock_inicio_lunes)
+    # --------------------------------
+    # CAMBIO DE DÍA
+    # --------------------------------
 
-demanda_acum_144 = []
-prod_acum_144 = []
-stock_playa_144 = []
-adelanto_horas_144 = []
-produccion_efectiva_144 = []
-ultima_tienda_preparada_144 = []
-tiendas_en_playa_144 = []
-cierres_ajustados_144 = [False] * 144
-motivos_estado_144 = []
+    def seleccionar_dia(self, fecha):
+        self.guardar()
+        self.fecha_actual = fecha.isoformat()
+        self.mostrar_servicio()
 
-for t in range(144):
-    dia_idx = t // 24
-    hora_del_dia = t % 24
-    dia_actual = dias_semana[dia_idx]
-    
-    hora_inicio_permitida_dia = horas_arranque_por_dia[dia_actual]
-    hora_fin_permitida_dia = horas_fin_por_dia[dia_actual]
+    # --------------------------------
+    # SERVICIO DIARIO
+    # --------------------------------
 
-    dem_h = demanda_h_144[t]
-    demanda_acumulada += dem_h
-    demanda_acum_144.append(demanda_acumulada)
-    
-    # 1. Se descuenta la demanda ocurrida durante la hora actual
-    stock_actual -= dem_h
-    if stock_actual < 0:
-        stock_actual = 0  
+    def mostrar_servicio(self):
 
-    # --- REGLA DE VOLCADO DE PEDIDOS ---
-    demanda_volcada_hasta_t = 0
-    for d_i in range(dia_idx + 1):
-        demanda_volcada_hasta_t += demanda_servicio_por_dia[dias_semana[d_i]]
-    
-    if hora_del_dia >= 4 and (dia_idx + 1) < len(dias_semana):
-        demanda_volcada_hasta_t += demanda_servicio_por_dia[dias_semana[dia_idx + 1]]
+        self.pantalla = "servicio"
+        self.limpiar()
 
-    esta_en_horario = hora_inicio_permitida_dia <= hora_del_dia < hora_fin_permitida_dia
+        self.titulo(
+            "Servicio del " + self.fecha_texto()
+        )
 
-    prod_h = 0
-    motivo = "PARADA"
-    
-    if esta_en_horario:
-        espacio_libre_playa = CAPACIDAD_PLAYA - stock_actual
-        
-        if espacio_libre_playa <= 0:
-            motivo = "PLAYA LLENA"
-        elif dia_actual == "Sábado":
-            prod_h = min(vel_maquina, espacio_libre_playa)
-            motivo = "PRODUCIENDO" if prod_h > 0 else "PLAYA LLENA"
+        tarjeta = tk.Frame(
+            self.contenido,
+            bg="white",
+            padx=30,
+            pady=30
+        )
+        tarjeta.pack(
+            anchor="nw",
+            padx=35,
+            fill="x"
+        )
+
+        tk.Label(
+            tarjeta,
+            text="PICKS DEL SERVICIO",
+            font=("Arial", 13, "bold"),
+            bg="white",
+            fg="#17243a"
+        ).pack(anchor="w", pady=(0, 15))
+
+        cursor.execute(
+            "SELECT picks FROM servicios WHERE fecha=?",
+            (self.fecha_actual,)
+        )
+        resultado = cursor.fetchone()
+
+        valor = resultado[0] if resultado else 0
+
+        self.daily_var = tk.StringVar(value=str(valor))
+
+        tk.Entry(
+            tarjeta,
+            textvariable=self.daily_var,
+            font=("Arial", 20),
+            width=15,
+            relief="solid",
+            bd=1
+        ).pack(anchor="w")
+
+        tk.Label(
+            tarjeta,
+            text="Introduce el número de picks del servicio.",
+            font=("Arial", 10),
+            bg="white",
+            fg="gray"
+        ).pack(anchor="w", pady=10)
+
+        self.boton_guardar(tarjeta)
+
+    # --------------------------------
+    # TIENDAS POR HORA
+    # --------------------------------
+
+    def mostrar_tiendas(self):
+
+        self.pantalla = "tiendas"
+        self.limpiar()
+
+        self.titulo(
+            "Número de tiendas por hora - " + self.fecha_texto()
+        )
+
+        self.crear_tabla("tiendas")
+
+    # --------------------------------
+    # PICKS POR HORA
+    # --------------------------------
+
+    def mostrar_picks(self):
+
+        self.pantalla = "picks"
+        self.limpiar()
+
+        self.titulo(
+            "Picks realizados por hora - " + self.fecha_texto()
+        )
+
+        self.crear_tabla("picks")
+
+    # --------------------------------
+    # TABLA HORARIA CON SCROLL
+    # --------------------------------
+
+    def crear_tabla(self, tipo):
+
+        exterior = tk.Frame(
+            self.contenido,
+            bg="#f1f4f8"
+        )
+        exterior.pack(
+            fill="both",
+            expand=True,
+            padx=35,
+            pady=5
+        )
+
+        canvas = tk.Canvas(
+            exterior,
+            bg="#f1f4f8",
+            highlightthickness=0
+        )
+
+        scrollbar = ttk.Scrollbar(
+            exterior,
+            orient="vertical",
+            command=canvas.yview
+        )
+
+        tabla = tk.Frame(canvas, bg="#f1f4f8")
+
+        tabla.bind(
+            "<Configure>",
+            lambda e: canvas.configure(
+                scrollregion=canvas.bbox("all")
+            )
+        )
+
+        canvas.create_window(
+            (0, 0),
+            window=tabla,
+            anchor="nw"
+        )
+
+        canvas.configure(
+            yscrollcommand=scrollbar.set
+        )
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        self.store_vars = []
+        self.pick_vars = []
+
+        cursor.execute("""
+            SELECT hora, tiendas, picks
+            FROM horas
+            WHERE fecha=?
+            ORDER BY hora
+        """, (self.fecha_actual,))
+
+        datos = {
+            fila[0]: (fila[1], fila[2])
+            for fila in cursor.fetchall()
+        }
+
+        cabecera = tk.Frame(
+            tabla,
+            bg="#253750",
+            padx=15,
+            pady=12
+        )
+        cabecera.pack(fill="x", pady=(0, 8))
+
+        tk.Label(
+            cabecera,
+            text="HORA",
+            width=12,
+            bg="#253750",
+            fg="white",
+            font=("Arial", 10, "bold")
+        ).pack(side="left")
+
+        if tipo == "tiendas":
+            tk.Label(
+                cabecera,
+                text="NÚMERO DE TIENDAS",
+                bg="#253750",
+                fg="white",
+                font=("Arial", 10, "bold")
+            ).pack(side="left", padx=30)
         else:
-            pedidos_pendientes_fabricar = demanda_volcada_hasta_t - produccion_acumulada
-            if pedidos_pendientes_fabricar <= 0:
-                motivo = "PENDIENTE VOLCADO (SIN PEDIDOS)"
+            tk.Label(
+                cabecera,
+                text="PICKS POR HORA",
+                bg="#253750",
+                fg="white",
+                font=("Arial", 10, "bold")
+            ).pack(side="left", padx=30)
+
+        for hora in range(24):
+
+            tiendas, picks = datos.get(hora, (0, 0))
+
+            fila = tk.Frame(
+                tabla,
+                bg="white",
+                padx=15,
+                pady=7
+            )
+            fila.pack(fill="x", pady=2)
+
+            tk.Label(
+                fila,
+                text=f"{hora:02d}:00",
+                width=12,
+                font=("Arial", 11, "bold"),
+                bg="white",
+                fg="#17243a"
+            ).pack(side="left")
+
+            if tipo == "tiendas":
+
+                variable = tk.StringVar(value=str(tiendas))
+
+                entrada = tk.Entry(
+                    fila,
+                    textvariable=variable,
+                    width=12,
+                    font=("Arial", 12),
+                    justify="center"
+                )
+                entrada.pack(side="left", padx=30)
+
+                self.store_vars.append(variable)
+
             else:
-                prod_h = min(vel_maquina, espacio_libre_playa, max(0.0, pedidos_pendientes_fabricar))
-                motivo = "PRODUCIENDO" if prod_h > 0 else "SIN TRABAJO"
-    else:
-        motivo = "FUERA DE HORARIO"
 
-    produccion_acumulada += prod_h
+                variable = tk.IntVar(value=picks)
 
-    # 2. La producción completada en esta hora se incorpora al stock al finalizar la misma
-    stock_actual += prod_h
-    if stock_actual > CAPACIDAD_PLAYA:
-        stock_actual = CAPACIDAD_PLAYA
+                valor = tk.Label(
+                    fila,
+                    text=str(picks),
+                    width=5,
+                    bg="white",
+                    font=("Arial", 12, "bold"),
+                    fg="#1675bd"
+                )
+                valor.pack(side="left")
 
-    if hora_del_dia == 23 and corregir_cierres_por_dia.get(dia_actual, False):
-        stock_real_objetivo = float(stocks_reales_cierre.get(dia_actual, stock_actual))
-        stock_actual = stock_real_objetivo
-        produccion_acumulada = stock_actual + demanda_acumulada
-        cierres_ajustados_144[t] = True
+                slider = tk.Scale(
+                    fila,
+                    from_=0,
+                    to=200,
+                    orient="horizontal",
+                    resolution=1,
+                    variable=variable,
+                    length=350,
+                    bg="white",
+                    highlightthickness=0,
+                    command=lambda v, etiqueta=valor:
+                        etiqueta.config(text=str(int(float(v))))
+                )
+                slider.pack(side="left", padx=20)
 
-    prod_acum_144.append(produccion_acumulada)
-    produccion_efectiva_144.append(prod_h)
-    stock_playa_144.append(stock_actual)
-    motivos_estado_144.append(motivo)
-    
-    horas_adelanto = int(round(stock_actual / vel_maquina)) if vel_maquina > 0 else 0
-    adelanto_horas_144.append(horas_adelanto)
+                self.pick_vars.append(variable)
 
-    cursor_sim = t
-    if stock_actual > 0:
-        stock_temp = stock_actual
-        while cursor_sim < 143 and stock_temp > 0:
-            cursor_sim += 1
-            dem_futura = demanda_h_144[cursor_sim]
-            if stock_temp >= dem_futura:
-                stock_temp -= dem_futura
-            else:
-                break
-        
-        d_fin_str = dias_semana[cursor_sim // 24][:3]
-        h_fin_str = horas_24[cursor_sim % 24]
-        ultimo_texto_tienda = f"{d_fin_str} {h_fin_str}"
-    else:
-        d_fin_str = dias_semana[t // 24][:3]
-        h_fin_str = horas_24[t % 24]
-        ultimo_texto_tienda = f"{d_fin_str} {h_fin_str}"
+        boton = tk.Button(
+            self.contenido,
+            text="GUARDAR DATOS",
+            font=("Arial", 12, "bold"),
+            bg="#1675bd",
+            fg="white",
+            activebackground="#105b96",
+            activeforeground="white",
+            relief="flat",
+            padx=30,
+            pady=12,
+            command=self.guardar
+        )
+        boton.pack(anchor="e", padx=40, pady=15)
 
-    ultima_tienda_preparada_144.append(ultimo_texto_tienda)
+    # --------------------------------
+    # GUARDAR DATOS
+    # --------------------------------
 
-    dem_dia_actual = demanda_servicio_por_dia[dia_actual]
-    tiendas_dia_total = sum(tiendas_por_hora)
-    picks_por_tienda_dia = dem_dia_actual / tiendas_dia_total if tiendas_dia_total > 0 else 1000
-    
-    if stock_actual > 0 and picks_por_tienda_dia > 0:
-        tiendas_en_playa = round(stock_actual / picks_por_tienda_dia)
-        tiendas_en_playa = min(tiendas_en_playa, tiendas_dia_total)
-        tiendas_en_playa_144.append(int(tiendas_en_playa))
-    else:
-        tiendas_en_playa_144.append(0)
+    def guardar(self):
 
-# ==========================================
-# 4. CONSTRUCCIÓN DE DATOS E HITOS
-# ==========================================
-df_completo_ajustado = []
-hitos_produccion = []
-hitos_ajustes_reales = []
-hitos_paradas_volcado = []
+        if self.pantalla == "servicio":
 
-for dia_idx, dia in enumerate(dias_semana):
-    p_h_dia = produccion_efectiva_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    dem_h_dia = demanda_h_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    
-    dem_acum_dia = demanda_acum_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    prod_acum_dia = prod_acum_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    stock_playa_dia = stock_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    adelanto_dia = adelanto_horas_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    ult_tienda_dia = ultima_tienda_preparada_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    tiendas_playa_dia = tiendas_en_playa_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    ajustes_dia = cierres_ajustados_144[dia_idx * 24 : (dia_idx + 1) * 24]
-    motivos_dia = motivos_estado_144[dia_idx * 24 : (dia_idx + 1) * 24]
+            try:
+                valor = self.daily_var.get().strip()
+                picks = int(valor) if valor else 0
 
-    horas_activas = [i for i, p in enumerate(p_h_dia) if p > 0]
-    if horas_activas:
-        turnos = []
-        inicio_actual = horas_activas[0]
-        prev = horas_activas[0]
+                if picks < 0:
+                    raise ValueError
 
-        for h in horas_activas[1:]:
-            if h == prev + 1:
-                prev = h
-            else:
-                turnos.append((inicio_actual, prev))
-                inicio_actual = h
-                prev = h
-        turnos.append((inicio_actual, prev))
+                cursor.execute("""
+                    INSERT INTO servicios (fecha, picks)
+                    VALUES (?, ?)
+                    ON CONFLICT(fecha)
+                    DO UPDATE SET picks=excluded.picks
+                """, (self.fecha_actual, picks))
 
-        for h_ini, h_fin in turnos:
-            stock_ini_val = stock_playa_dia[h_ini]
-            hitos_produccion.append({
-                "tipo": "INICIO",
-                "eje_x": f"{dia[:3]} {horas_24[h_ini]}",
-                "y_val": prod_acum_dia[h_ini],
-                "texto": f"INICIO {horas_24[h_ini]}<br>({stock_ini_val:,.0f} p.)",
-            })
-            
-            if h_fin == 23:
-                etiqueta_fin = "24:00"
-                eje_x_fin = f"{dia[:3]} 23:00"
-                y_val_fin = prod_acum_dia[23]
-                stock_fin_val = stock_playa_dia[23]
-                prep_fin_val = ult_tienda_dia[23]
-            else:
-                etiqueta_fin = horas_24[h_fin + 1]
-                eje_x_fin = f"{dia[:3]} {horas_24[h_fin + 1]}"
-                y_val_fin = prod_acum_dia[h_fin + 1]
-                stock_fin_val = stock_playa_dia[h_fin + 1]
-                prep_fin_val = ult_tienda_dia[h_fin + 1]
+            except ValueError:
+                messagebox.showerror(
+                    "Error",
+                    "Introduce un número entero válido de picks."
+                )
+                return
 
-            hitos_produccion.append({
-                "tipo": "FIN",
-                "eje_x": eje_x_fin,
-                "y_val": y_val_fin,
-                "texto": f"FIN {etiqueta_fin}<br>({stock_fin_val:,.0f} p.)<br><span style='color:#0b5ed7; font-weight:bold;'>Prep: {prep_fin_val}</span>",
-            })
+        elif self.pantalla in ("tiendas", "picks"):
 
-    en_parada_volcado = False
-    for h_idx in range(24):
-        stock_actual_h = stock_playa_dia[h_idx]
-        is_ajustado = ajustes_dia[h_idx]
+            cursor.execute("""
+                SELECT hora, tiendas, picks
+                FROM horas
+                WHERE fecha=?
+            """, (self.fecha_actual,))
 
-        if is_ajustado:
-            hitos_ajustes_reales.append({
-                "eje_x": f"{dia[:3]} {horas_24[h_idx]}",
-                "y_stock": stock_actual_h,
-                "texto": f"CIERRE REAL: {stock_actual_h:,.0f} p."
-            })
-            
-        if motivos_dia[h_idx] == "PENDIENTE VOLCADO (SIN PEDIDOS)":
-            if not en_parada_volcado:
-                hitos_paradas_volcado.append({
-                    "eje_x": f"{dia[:3]} {horas_24[h_idx]}",
-                    "y_val": prod_acum_dia[h_idx],
-                    "texto": "⏳ Esperando Volcado"
-                })
-                en_parada_volcado = True
-        else:
-            en_parada_volcado = False
+            cursor.execute("BEGIN")
 
-        df_completo_ajustado.append({
-            "Eje_X": f"{dia[:3]} {horas_24[h_idx]}",
-            "Dia": dia,
-            "Hora": horas_24[h_idx],
-            "Demanda_Hora": dem_h_dia[h_idx],
-            "Produccion_Hora": p_h_dia[h_idx],
-            "Demanda_Acum": dem_acum_dia[h_idx],
-            "Prod_Acum": prod_acum_dia[h_idx],
-            "Stock_Playa": stock_actual_h,
-            "Horas Adelanto": adelanto_dia[h_idx],
-            "Preparando Por": ult_tienda_dia[h_idx],
-            "Tiendas_En_Playa": tiendas_playa_dia[h_idx],
-            "Estado": motivos_dia[h_idx],
-        })
+            for hora in range(24):
 
-df_plot = pd.DataFrame(df_completo_ajustado)
+                cursor.execute("""
+                    SELECT tiendas, picks
+                    FROM horas
+                    WHERE fecha=? AND hora=?
+                """, (self.fecha_actual, hora))
 
-# ==========================================
-# 5. GRÁFICO PLOTLY (3 FILAS)
-# ==========================================
-fig = make_subplots(
-    rows=3,
-    cols=1,
-    shared_xaxes=True,
-    vertical_spacing=0.06,
-    row_heights=[0.50, 0.25, 0.25],
-    subplot_titles=(
-        f"OPM ({escenario_seleccionado}) - Control por Horarios (Playa: {CAPACIDAD_PLAYA:,.0f} picks)",
-        "Evolución del Stock Exacto en Playa (Picks)",
-        "Horas de Adelanto / Autonomía en Playa (Horas)",
-    ),
-)
+                actual = cursor.fetchone()
+                tiendas = actual[0] if actual else 0
+                picks = actual[1] if actual else 0
 
-fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Demanda_Acum"], name="Demanda Acumulada", line=dict(color="#ff7f0e", width=2.5)), row=1, col=1)
-fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Prod_Acum"], name="Producción Acumulada + Stock", line=dict(color="#2ca02c", width=2.5)), row=1, col=1)
-fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Stock_Playa"], name="Stock en Playa (Picks)", line=dict(color="#1f77b4", width=2), hoverinfo="skip"), row=2, col=1)
-fig.add_trace(go.Scatter(x=df_plot["Eje_X"], y=df_plot["Horas Adelanto"], name="Horas de Adelanto", line=dict(color="#1f77b4", width=2), fill='tozeroy', hoverinfo="skip"), row=3, col=1)
+                if self.pantalla == "tiendas":
+                    try:
+                        valor = self.store_vars[hora].get().strip()
+                        tiendas = int(valor) if valor else 0
+                        if tiendas < 0:
+                            raise ValueError
+                    except ValueError:
+                        messagebox.showerror(
+                            "Error",
+                            f"Número de tiendas no válido a las {hora:02d}:00."
+                        )
+                        conexion.rollback()
+                        return
 
-x_vals = df_plot["Eje_X"].values
-y_picks_vals = df_plot["Stock_Playa"].values
+                else:
+                    picks = self.pick_vars[hora].get()
 
-puntos_x, puntos_y, puntos_text = [], [], []
-ultimo_y_etiquetado = -9999
+                cursor.execute("""
+                    INSERT INTO horas (fecha, hora, tiendas, picks)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(fecha, hora)
+                    DO UPDATE SET
+                        tiendas=excluded.tiendas,
+                        picks=excluded.picks
+                """, (self.fecha_actual, hora, tiendas, picks))
 
-for i in range(len(y_picks_vals)):
-    val = y_picks_vals[i]
-    es_extremo = (i == 0 or i == len(y_picks_vals) - 1)
-    
-    if i == 0:
-        es_pico = val >= y_picks_vals[1]
-        es_valle = val <= y_picks_vals[1]
-    elif i == len(y_picks_vals) - 1:
-        es_pico = val >= y_picks_vals[-2]
-        es_valle = val <= y_picks_vals[-2]
-    else:
-        es_pico = (val >= y_picks_vals[i - 1]) and (val >= y_picks_vals[i + 1]) and \
-                  (val > y_picks_vals[i - 1] or val > y_picks_vals[i + 1])
-        es_valle = (val <= y_picks_vals[i - 1]) and (val <= y_picks_vals[i + 1]) and \
-                   (val < y_picks_vals[i - 1] or val < y_picks_vals[i + 1])
+        conexion.commit()
 
-    debe_etiquetar = es_extremo or ((es_pico or es_valle) and abs(val - ultimo_y_etiquetado) >= (CAPACIDAD_PLAYA * 0.08))
+        messagebox.showinfo(
+            "Guardado",
+            "Los datos se han guardado correctamente."
+        )
 
-    if debe_etiquetar:
-        puntos_x.append(x_vals[i])
-        puntos_y.append(val)
-        puntos_text.append(f"{val:,.0f} p.")
-        ultimo_y_etiquetado = val
+    def boton_guardar(self, tarjeta):
 
-if puntos_x:
-    fig.add_trace(go.Scatter(
-        x=puntos_x, 
-        y=puntos_y, 
-        mode="markers+text", 
-        text=puntos_text, 
-        textposition="top center", 
-        textfont=dict(size=9, color="#1f77b4"), 
-        marker=dict(size=5, color="#1f77b4"), 
-        showlegend=False
-    ), row=2, col=1)
+        tk.Button(
+            tarjeta,
+            text="GUARDAR DATOS",
+            font=("Arial", 11, "bold"),
+            bg="#1675bd",
+            fg="white",
+            relief="flat",
+            padx=25,
+            pady=10,
+            command=self.guardar
+        ).pack(anchor="w", pady=20)
 
-y_adelanto_vals = df_plot["Horas Adelanto"].values
-puntos_adelanto_x, puntos_adelanto_y, puntos_adelanto_text = [], [], []
-ultimo_val_etiquetado = -9999
 
-for i in range(len(y_adelanto_vals)):
-    val_ad = y_adelanto_vals[i]
-    es_extremo = (i == 0 or i == len(y_adelanto_vals) - 1)
-    
-    if i == 0:
-        es_maximo = val_ad >= y_adelanto_vals[1]
-        es_minimo = val_ad <= y_adelanto_vals[1]
-    elif i == len(y_adelanto_vals) - 1:
-        es_maximo = val_ad >= y_adelanto_vals[-2]
-        es_minimo = val_ad <= y_adelanto_vals[-2]
-    else:
-        es_maximo = (val_ad >= y_adelanto_vals[i - 1]) and (val_ad >= y_adelanto_vals[i + 1]) and \
-                    (val_ad > y_adelanto_vals[i - 1] or val_ad > y_adelanto_vals[i + 1])
-        es_minimo = (val_ad <= y_adelanto_vals[i - 1]) and (val_ad <= y_adelanto_vals[i + 1]) and \
-                    (val_ad < y_adelanto_vals[i - 1] or val_ad < y_adelanto_vals[i + 1])
+# --------------------------------
+# INICIAR PROGRAMA
+# --------------------------------
 
-    debe_etiquetar = es_extremo or ((es_maximo or es_minimo) and val_ad != ultimo_val_etiquetado)
+if __name__ == "__main__":
 
-    if debe_etiquetar:
-        puntos_adelanto_x.append(x_vals[i])
-        puntos_adelanto_y.append(val_ad)
-        puntos_adelanto_text.append(f"{val_ad:.0f}h")  
-        ultimo_val_etiquetado = val_ad
-
-if puntos_adelanto_x:
-    fig.add_trace(go.Scatter(
-        x=puntos_adelanto_x, 
-        y=puntos_adelanto_y, 
-        mode="markers+text", 
-        text=puntos_adelanto_text, 
-        textposition="top center", 
-        textfont=dict(size=9, color="#0b5ed7", family="sans-serif"), 
-        marker=dict(size=6, color="#0b5ed7"), 
-        showlegend=False
-    ), row=3, col=1)
-
-for hito in hitos_produccion:
-    is_fin = hito["tipo"] == "FIN"
-    fig.add_annotation(
-        x=hito["eje_x"], 
-        y=hito["y_val"], 
-        text=hito["texto"],
-        showarrow=True, 
-        arrowhead=2, 
-        arrowsize=0.7, 
-        arrowwidth=1.0,
-        arrowcolor="#e31a1c" if is_fin else "#33a02c",
-        ax=0, 
-        ay=-55 if is_fin else 45,
-        bgcolor="rgba(255, 255, 255, 0.95)", 
-        bordercolor="#e31a1c" if is_fin else "#33a02c",
-        borderwidth=1.2, 
-        borderpad=4, 
-        font=dict(size=9, color="#990000" if is_fin else "#1b5e20", family="sans-serif"),
-        row=1, col=1
-    )
-
-for hito_v in hitos_paradas_volcado:
-    fig.add_annotation(
-        x=hito_v["eje_x"],
-        y=hito_v["y_val"],
-        text=hito_v["texto"],
-        showarrow=True,
-        arrowhead=2,
-        arrowsize=0.7,
-        arrowwidth=1.2,
-        arrowcolor="#d32f2f",
-        ax=0,
-        ay=-35,
-        bgcolor="rgba(255, 235, 238, 0.95)",
-        bordercolor="#d32f2f",
-        borderwidth=1.2,
-        borderpad=4,
-        font=dict(size=8, color="#900c3f", family="sans-serif"),
-        row=1, col=1
-    )
-
-for ajuste in hitos_ajustes_reales:
-    fig.add_annotation(
-        x=ajuste["eje_x"],
-        y=ajuste["y_stock"],
-        text=ajuste["texto"],
-        showarrow=True,
-        arrowhead=2,
-        arrowsize=0.7,
-        arrowwidth=1.2,
-        arrowcolor="#ff7f0e",
-        ax=0,
-        ay=-35,
-        bgcolor="rgba(255, 243, 205, 0.95)",
-        bordercolor="#ff7f0e",
-        borderwidth=1.2,
-        borderpad=4,
-        font=dict(size=9, color="#856404", family="sans-serif"),
-        row=2, col=1
-    )
-
-max_y_picks = max(df_plot["Demanda_Acum"].max(), df_plot["Prod_Acum"].max())
-for i_dia, dia in enumerate(dias_semana):
-    idx_medio_dia = i_dia * 24 + 12
-    fig.add_annotation(
-        x=df_plot["Eje_X"].iloc[idx_medio_dia], y=max_y_picks * 0.94, text=f"<b>{dia.upper()}</b>",
-        showarrow=False, font=dict(size=11, color="#444444"),
-        bgcolor="rgba(255, 255, 255, 0.85)", bordercolor="rgba(150, 150, 150, 0.4)", borderwidth=1, borderpad=4,
-        row=1, col=1
-    )
-    if i_dia > 0:
-        fig.add_vline(x=df_plot["Eje_X"].iloc[i_dia * 24], line_dash="solid", line_color="rgba(100, 100, 100, 0.3)", line_width=1.2)
-
-ticks_cada_n_horas = 3
-x_ticks_vals = [df_plot["Eje_X"].iloc[i] for i in range(0, len(df_plot), ticks_cada_n_horas)]
-
-fig.update_layout(height=950, template="plotly_white", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(l=60, r=30, t=80, b=50))
-fig.update_xaxes(tickvals=x_ticks_vals, ticktext=x_ticks_vals, tickangle=-45, showgrid=True, row=3, col=1)
-fig.update_yaxes(title_text="Picks Acumulados", row=1, col=1, showgrid=True)
-min_stock_real = min(y_picks_vals) * 0.85
-max_stock_grafico = max(max(y_picks_vals), CAPACIDAD_PLAYA) * 1.15
-fig.update_yaxes(title_text="Stock en Playa (Picks)", range=[min_stock_real, max_stock_grafico], row=2, col=1, showgrid=True)
-fig.update_yaxes(title_text="Horas de Adelanto", row=3, col=1, showgrid=True)
-
-# ==========================================
-# 6. RENDERIZADO EN STREAMLIT
-# ==========================================
-st.plotly_chart(fig, use_container_width=True)
-
-# ==========================================
-# 7. TABLA DE FRANJAS Y DETALLE DE PREPARACIÓN
-# ==========================================
-st.subheader("📋 Detalle Horario de Preparación y Estado de Playa")
-st.markdown("Visualiza hora a hora la demanda, la producción generada, los **picks exactos**, las **horas de adelanto**, la **última tienda preparada** y las **tiendas enteras reales** almacenadas en la playa.")
-
-col_f1, col_f2 = st.columns(2)
-with col_f1:
-    dia_seleccionado = st.selectbox("Filtrar por Día:", ["Todos"] + dias_semana)
-with col_f2:
-    solo_activos = st.checkbox("Mostrar solo horas con producción activa", value=False)
-
-df_tabla = df_plot.copy()
-if dia_seleccionado != "Todos":
-    df_tabla = df_tabla[df_tabla["Dia"] == dia_seleccionado]
-if solo_activos:
-    df_tabla = df_tabla[df_tabla["Produccion_Hora"] > 0]
-
-st.dataframe(
-    df_tabla[["Eje_X", "Demanda_Hora", "Produccion_Hora", "Stock_Playa", "Horas Adelanto", "Preparando Por", "Tiendas_En_Playa", "Estado"]],
-    use_container_width=True,
-    hide_index=True
-)
+    root = tk.Tk()
+    app = AlmacenApp(root)
+    root.mainloop()
