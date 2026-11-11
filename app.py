@@ -1,11 +1,12 @@
 
 import streamlit as st
 import sqlite3
+import pandas as pd
 from datetime import date, timedelta
 
-# ==========================================
+# ==================================================
 # CONFIGURACIÓN
-# ==========================================
+# ==================================================
 
 st.set_page_config(
     page_title="Gestión de Almacén",
@@ -16,136 +17,110 @@ st.set_page_config(
 DB = "almacen.db"
 MAX_PICKS_HORA = 500
 
-# ==========================================
+# ==================================================
 # BASE DE DATOS
-# ==========================================
+# ==================================================
 
 def conectar():
     return sqlite3.connect(DB)
 
 def crear_base_datos():
-    conn = conectar()
-    cur = conn.cursor()
+    with conectar() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS servicios (
+                fecha TEXT PRIMARY KEY,
+                picks INTEGER DEFAULT 0
+            )
+        """)
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS servicios (
-            fecha TEXT PRIMARY KEY,
-            picks INTEGER DEFAULT 0
-        )
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS horas (
-            fecha TEXT,
-            hora INTEGER,
-            tiendas INTEGER DEFAULT 0,
-            picks INTEGER DEFAULT 0,
-            PRIMARY KEY (fecha, hora)
-        )
-    """)
-
-    conn.commit()
-    conn.close()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS horas (
+                fecha TEXT,
+                hora INTEGER,
+                tiendas INTEGER DEFAULT 0,
+                picks INTEGER DEFAULT 0,
+                PRIMARY KEY (fecha, hora)
+            )
+        """)
 
 def obtener_servicio(fecha):
-    conn = conectar()
-    cur = conn.cursor()
-
-    cur.execute(
-        "SELECT picks FROM servicios WHERE fecha=?",
-        (fecha,)
-    )
-
-    resultado = cur.fetchone()
-    conn.close()
+    with conectar() as conn:
+        resultado = conn.execute(
+            "SELECT picks FROM servicios WHERE fecha=?",
+            (fecha,)
+        ).fetchone()
 
     return resultado[0] if resultado else 0
 
+def guardar_servicio(fecha, picks):
+    with conectar() as conn:
+        conn.execute("""
+            INSERT INTO servicios (fecha, picks)
+            VALUES (?, ?)
+            ON CONFLICT(fecha)
+            DO UPDATE SET picks=excluded.picks
+        """, (fecha, picks))
+
+def guardar_sidebar(fecha, clave):
+    valor = int(st.session_state[clave])
+    guardar_servicio(fecha, valor)
+
 def obtener_horas(fecha):
-    conn = conectar()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT hora, tiendas, picks
-        FROM horas
-        WHERE fecha=?
-        ORDER BY hora
-    """, (fecha,))
-
-    resultados = cur.fetchall()
-    conn.close()
+    with conectar() as conn:
+        filas = conn.execute("""
+            SELECT hora, tiendas, picks
+            FROM horas
+            WHERE fecha=?
+        """, (fecha,)).fetchall()
 
     datos = {
-        hora: {"tiendas": tiendas, "picks": picks}
-        for hora, tiendas, picks in resultados
+        h: {"tiendas": t, "picks": p}
+        for h, t, p in filas
     }
 
-    for hora in range(24):
-        if hora not in datos:
-            datos[hora] = {"tiendas": 0, "picks": 0}
+    for h in range(24):
+        if h not in datos:
+            datos[h] = {
+                "tiendas": 0,
+                "picks": 0
+            }
 
     return datos
 
-def guardar_servicio(fecha, picks):
-    conn = conectar()
-    cur = conn.cursor()
-
-    cur.execute("""
-        INSERT INTO servicios (fecha, picks)
-        VALUES (?, ?)
-        ON CONFLICT(fecha)
-        DO UPDATE SET picks=excluded.picks
-    """, (fecha, picks))
-
-    conn.commit()
-    conn.close()
-
 def guardar_horas(fecha, tipo, valores):
-    conn = conectar()
-    cur = conn.cursor()
+    with conectar() as conn:
 
-    # Recuperar los datos existentes
-    cur.execute("""
-        SELECT hora, tiendas, picks
-        FROM horas
-        WHERE fecha=?
-    """, (fecha,))
+        for hora, valor in enumerate(valores):
 
-    existentes = {
-        h: [t, p] for h, t, p in cur.fetchall()
-    }
+            fila = conn.execute("""
+                SELECT tiendas, picks
+                FROM horas
+                WHERE fecha=? AND hora=?
+            """, (fecha, hora)).fetchone()
 
-    for hora in range(24):
-        if hora not in existentes:
-            existentes[hora] = [0, 0]
+            tiendas = fila[0] if fila else 0
+            picks = fila[1] if fila else 0
 
-        if tipo == "tiendas":
-            existentes[hora][0] = valores[hora]
-        else:
-            existentes[hora][1] = valores[hora]
+            if tipo == "tiendas":
+                tiendas = valor
+            else:
+                picks = valor
 
-        cur.execute("""
-            INSERT INTO horas (fecha, hora, tiendas, picks)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(fecha, hora)
-            DO UPDATE SET
-                tiendas=excluded.tiendas,
-                picks=excluded.picks
-        """, (
-            fecha,
-            hora,
-            existentes[hora][0],
-            existentes[hora][1]
-        ))
-
-    conn.commit()
-    conn.close()
+            conn.execute("""
+                INSERT INTO horas
+                (fecha, hora, tiendas, picks)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(fecha, hora)
+                DO UPDATE SET
+                    tiendas=excluded.tiendas,
+                    picks=excluded.picks
+            """, (fecha, hora, tiendas, picks))
 
 crear_base_datos()
 
-# ==========================================
-# ESTILO
-# ==========================================
+# ==================================================
+# ESTILO VISUAL
+# ==================================================
 
 st.markdown("""
 <style>
@@ -158,7 +133,7 @@ st.markdown("""
     }
 
     div[data-testid="stMetric"] {
-        background: white;
+        background-color: white;
         padding: 15px;
         border-radius: 12px;
         border: 1px solid #e5e9f0;
@@ -170,34 +145,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# FECHAS Y NAVEGACIÓN
-# ==========================================
-
-st.sidebar.title("📦 ALMACÉN")
-st.sidebar.caption("Panel de gestión")
-
-st.sidebar.divider()
-
-st.sidebar.subheader("Semana de servicio")
-
-if "semana" not in st.session_state:
-    st.session_state.semana = date(2026, 11, 16)
-
-fecha_elegida = st.sidebar.date_input(
-    "Seleccionar semana",
-    value=st.session_state.semana,
-    format="DD/MM/YYYY"
-)
-
-# Ajustar automáticamente al lunes
-lunes = fecha_elegida - timedelta(days=fecha_elegida.weekday())
-st.session_state.semana = lunes
-
-dias = [
-    lunes + timedelta(days=i)
-    for i in range(6)
-]
+# ==================================================
+# FECHAS DE SERVICIO
+# ==================================================
 
 nombres = [
     "Lunes",
@@ -208,100 +158,149 @@ nombres = [
     "Sábado"
 ]
 
-opciones = {
-    f"{nombres[i]} {dias[i].strftime('%d/%m')}":
-    dias[i].isoformat()
-    for i in range(6)
-}
+if "semana" not in st.session_state:
+    hoy = date.today()
+    dias_hasta_lunes = (7 - hoy.weekday()) % 7
+    st.session_state.semana = hoy + timedelta(
+        days=dias_hasta_lunes
+    )
 
-st.sidebar.subheader("Días de servicio")
+# ==================================================
+# BARRA LATERAL
+# ==================================================
 
-dia_seleccionado = st.sidebar.radio(
-    "Selecciona el día",
-    list(opciones.keys())
-)
-
-fecha_actual = opciones[dia_seleccionado]
+st.sidebar.title("📦 ALMACÉN")
+st.sidebar.caption("Panel de control del almacén")
 
 st.sidebar.divider()
 
+st.sidebar.subheader("📅 SEMANA DE SERVICIO")
+
+fecha_elegida = st.sidebar.date_input(
+    "Seleccionar semana",
+    value=st.session_state.semana,
+    format="DD/MM/YYYY"
+)
+
+lunes = fecha_elegida - timedelta(
+    days=fecha_elegida.weekday()
+)
+
+st.session_state.semana = lunes
+
+dias = [
+    lunes + timedelta(days=i)
+    for i in range(6)
+]
+
+st.sidebar.divider()
+
+st.sidebar.subheader("📋 PICKS POR SERVICIO")
+
+st.sidebar.caption(
+    "Introduce los picks previstos para cada día. "
+    "Se guardan automáticamente."
+)
+
+# Campos de picks siempre visibles
+
+for i, dia in enumerate(dias):
+
+    fecha = dia.isoformat()
+    nombre = nombres[i]
+    clave = f"sidebar_picks_{fecha}"
+
+    valor_guardado = obtener_servicio(fecha)
+
+    if clave not in st.session_state:
+        st.session_state[clave] = int(valor_guardado)
+
+    col_dia, col_picks = st.sidebar.columns([2, 1])
+
+    with col_dia:
+        st.markdown(
+            f"**{nombre}**",
+            help=dia.strftime("%d/%m/%Y")
+        )
+        st.caption(dia.strftime("%d/%m"))
+
+    with col_picks:
+        st.number_input(
+            f"Picks {nombre}",
+            min_value=0,
+            max_value=1000000,
+            step=1,
+            key=clave,
+            label_visibility="collapsed",
+            on_change=guardar_sidebar,
+            args=(fecha, clave)
+        )
+
+    st.sidebar.divider()
+
+# ==================================================
+# NAVEGACIÓN
+# ==================================================
+
+st.sidebar.subheader("⚙️ GESTIÓN")
+
 pantalla = st.sidebar.radio(
-    "GESTIÓN DEL ALMACÉN",
+    "Selecciona una sección",
     [
-        "Servicio diario",
         "Tiendas por hora",
         "Picks por hora",
-        "Resumen diario"
+        "Resumen diario",
+        "Resumen semanal"
     ]
 )
 
-# ==========================================
-# CABECERA
-# ==========================================
+# Día seleccionado en la barra lateral
+
+dia_seleccionado = st.sidebar.selectbox(
+    "Día que quieres consultar",
+    nombres
+)
+
+indice_dia = nombres.index(dia_seleccionado)
+fecha_actual = dias[indice_dia].isoformat()
+
+st.sidebar.divider()
+
+st.sidebar.caption(
+    "Gestión de almacén | Versión 1.0"
+)
+
+# ==================================================
+# CABECERA PRINCIPAL
+# ==================================================
 
 st.title("📦 Gestión de almacén")
 
 st.caption(
-    f"Servicio seleccionado: {dia_seleccionado} "
-    f"| {fecha_actual}"
+    f"{dia_seleccionado} "
+    f"{dias[indice_dia].strftime('%d/%m/%Y')}"
 )
 
 st.divider()
 
-# ==========================================
-# SERVICIO DIARIO
-# ==========================================
-
-if pantalla == "Servicio diario":
-
-    st.header("Picks del servicio")
-
-    valor_actual = obtener_servicio(fecha_actual)
-
-    with st.form("form_servicio"):
-
-        picks_dia = st.number_input(
-            "Número de picks del servicio",
-            min_value=0,
-            max_value=1000000,
-            value=int(valor_actual),
-            step=1
-        )
-
-        guardar = st.form_submit_button(
-            "💾 Guardar servicio",
-            use_container_width=True
-        )
-
-        if guardar:
-            guardar_servicio(
-                fecha_actual,
-                int(picks_dia)
-            )
-            st.success("Servicio guardado correctamente.")
-
-    st.info(
-        "Introduce aquí el total de picks previstos "
-        "para el servicio de este día."
-    )
-
-# ==========================================
+# ==================================================
 # TIENDAS POR HORA
-# ==========================================
+# ==================================================
 
-elif pantalla == "Tiendas por hora":
+if pantalla == "Tiendas por hora":
 
-    st.header("🏬 Número de tiendas por hora")
+    st.header("🏬 Tiendas por hora")
 
     st.write(
-        "Introduce manualmente cuántas tiendas "
-        "corresponden a cada hora."
+        "Introduce manualmente el número de tiendas "
+        "correspondiente a cada hora."
     )
 
     datos = obtener_horas(fecha_actual)
-    valores = []
 
     with st.form("form_tiendas"):
+
+        valores = []
 
         for inicio in range(0, 24, 2):
 
@@ -313,6 +312,7 @@ elif pantalla == "Tiendas por hora":
             ):
 
                 with columna:
+
                     valor = st.number_input(
                         f"Tiendas a las {hora:02d}:00",
                         min_value=0,
@@ -325,11 +325,12 @@ elif pantalla == "Tiendas por hora":
                     valores.append((hora, int(valor)))
 
         guardar = st.form_submit_button(
-            "💾 Guardar tiendas",
+            "💾 GUARDAR TIENDAS",
             use_container_width=True
         )
 
         if guardar:
+
             lista = [0] * 24
 
             for hora, valor in valores:
@@ -343,23 +344,24 @@ elif pantalla == "Tiendas por hora":
 
             st.success("Tiendas guardadas correctamente.")
 
-# ==========================================
+# ==================================================
 # PICKS POR HORA
-# ==========================================
+# ==================================================
 
 elif pantalla == "Picks por hora":
 
     st.header("📊 Picks realizados por hora")
 
     st.write(
-        "Utiliza los deslizadores para introducir "
-        "los picks realizados en cada hora."
+        "Desliza cada barra para indicar cuántos "
+        "picks has realizado en cada hora."
     )
 
     datos = obtener_horas(fecha_actual)
-    valores = []
 
     with st.form("form_picks"):
+
+        valores = []
 
         for inicio in range(0, 24, 2):
 
@@ -387,11 +389,12 @@ elif pantalla == "Picks por hora":
                     valores.append((hora, int(valor)))
 
         guardar = st.form_submit_button(
-            "💾 Guardar picks",
+            "💾 GUARDAR PICKS",
             use_container_width=True
         )
 
         if guardar:
+
             lista = [0] * 24
 
             for hora, valor in valores:
@@ -405,13 +408,13 @@ elif pantalla == "Picks por hora":
 
             st.success("Picks guardados correctamente.")
 
-# ==========================================
+# ==================================================
 # RESUMEN DIARIO
-# ==========================================
+# ==================================================
 
 elif pantalla == "Resumen diario":
 
-    st.header("📈 Resumen del día")
+    st.header("📈 Resumen diario")
 
     datos = obtener_horas(fecha_actual)
 
@@ -432,10 +435,15 @@ elif pantalla == "Resumen diario":
 
     media = (
         total_picks / horas_activas
-        if horas_activas > 0 else 0
+        if horas_activas else 0
     )
 
-    c1, c2 = st.columns(2)
+    cumplimiento = (
+        total_picks / servicio * 100
+        if servicio > 0 else 0
+    )
+
+    c1, c2, c3 = st.columns(3)
 
     c1.metric(
         "Picks del servicio",
@@ -447,23 +455,31 @@ elif pantalla == "Resumen diario":
         f"{total_picks:,}"
     )
 
-    c3, c4 = st.columns(2)
-
     c3.metric(
-        "Total de tiendas",
+        "Tiendas",
         f"{total_tiendas:,}"
     )
 
-    c4.metric(
-        "Media de picks por hora activa",
-        f"{media:.1f}"
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric(
+        "Productividad media",
+        f"{media:.1f} picks/h"
+    )
+
+    c2.metric(
+        "Horas activas",
+        horas_activas
+    )
+
+    c3.metric(
+        "Cumplimiento",
+        f"{cumplimiento:.1f}%"
     )
 
     st.divider()
 
-    st.subheader("Detalle horario")
-
-    import pandas as pd
+    st.subheader("Detalle por hora")
 
     tabla = pd.DataFrame([
         {
@@ -480,15 +496,102 @@ elif pantalla == "Resumen diario":
         hide_index=True
     )
 
-    st.subheader("Evolución de picks")
+    st.subheader("Picks realizados por hora")
 
     st.bar_chart(
         tabla.set_index("Hora")["Picks"]
     )
 
-    diferencia = total_picks - servicio
+    st.subheader("Tiendas por hora")
+
+    st.bar_chart(
+        tabla.set_index("Hora")["Tiendas"]
+    )
 
     st.metric(
         "Diferencia respecto al servicio",
-        f"{diferencia:+,} picks"
+        f"{total_picks - servicio:+,} picks"
     )
+
+# ==================================================
+# RESUMEN SEMANAL
+# ==================================================
+
+elif pantalla == "Resumen semanal":
+
+    st.header("📅 Resumen semanal")
+
+    registros = []
+
+    for dia in dias:
+
+        fecha = dia.isoformat()
+
+        servicio = obtener_servicio(fecha)
+        datos = obtener_horas(fecha)
+
+        tiendas = sum(
+            datos[h]["tiendas"] for h in range(24)
+        )
+
+        picks = sum(
+            datos[h]["picks"] for h in range(24)
+        )
+
+        cumplimiento = (
+            picks / servicio * 100
+            if servicio > 0 else 0
+        )
+
+        registros.append({
+            "Día": nombres[dias.index(dia)],
+            "Fecha": dia.strftime("%d/%m"),
+            "Servicio": servicio,
+            "Tiendas": tiendas,
+            "Picks realizados": picks,
+            "Cumplimiento (%)": round(cumplimiento, 1)
+        })
+
+    tabla = pd.DataFrame(registros)
+
+    total_servicio = tabla["Servicio"].sum()
+    total_tiendas = tabla["Tiendas"].sum()
+    total_picks = tabla["Picks realizados"].sum()
+
+    cumplimiento_semanal = (
+        total_picks / total_servicio * 100
+        if total_servicio > 0 else 0
+    )
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric("Picks previstos", f"{total_servicio:,}")
+    c2.metric("Picks realizados", f"{total_picks:,}")
+    c3.metric("Tiendas", f"{total_tiendas:,}")
+
+    st.metric(
+        "Cumplimiento semanal",
+        f"{cumplimiento_semanal:.1f}%"
+    )
+
+    st.divider()
+
+    st.subheader("Detalle de la semana")
+
+    st.dataframe(
+        tabla,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.subheader("Comparativa de picks por día")
+
+    grafico = tabla.set_index("Día")[
+        ["Servicio", "Picks realizados"]
+    ]
+
+    st.bar_chart(grafico)
+
+# ==================================================
+# FIN
+# ==================================================
