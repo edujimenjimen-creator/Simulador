@@ -473,6 +473,15 @@ def calcular_planificacion(
                 terminado = True
                 break
 
+            # Aplicar cualquier ajuste manual guardado en este instante.
+            clave_ajuste = (
+                cursor.strftime("%Y-%m-%d %H:%M:%S"),
+                fecha_servicio
+            )
+
+            if clave_ajuste in ajustes:
+                saldo = float(ajustes[clave_ajuste])
+
             # Fin del intervalo consultado.
             if cursor >= final:
 
@@ -484,15 +493,6 @@ def calcular_planificacion(
                 })
 
                 break
-
-            # Ajuste manual en ese momento.
-            clave_ajuste = (
-                cursor.strftime("%Y-%m-%d %H:%M:%S"),
-                fecha_servicio
-            )
-
-            if clave_ajuste in ajustes:
-                saldo = float(ajustes[clave_ajuste])
 
             registros.append({
                 "Fecha y hora": cursor,
@@ -659,10 +659,11 @@ else:
                 "estado": fila["Estado"]
             })
 
-        # Identificar ajustes manuales guardados.
+        # Identificar qué filas tienen un ajuste manual guardado.
         ajustes = obtener_ajustes()
 
         indices_rojos = set()
+        origenes = []
 
         for indice, referencia in enumerate(referencias):
 
@@ -671,8 +672,15 @@ else:
                 referencia["fecha_servicio"]
             )
 
-            if clave in ajustes:
+            es_manual = clave in ajustes
+
+            if es_manual:
                 indices_rojos.add(indice)
+                origenes.append("✏️ Manual")
+            else:
+                origenes.append("Automático")
+
+        tabla["Origen"] = origenes
 
         tabla["Fecha y hora"] = tabla[
             "Fecha y hora"
@@ -755,6 +763,10 @@ else:
         # EDITOR DE TABLA
         # --------------------------------------------------
 
+        editor_key = (
+            f"tabla_planificacion_{st.session_state.version_tabla}"
+        )
+
         st.data_editor(
             tabla_estilizada,
             use_container_width=True,
@@ -765,7 +777,8 @@ else:
             args=(editor_key,),
             disabled=[
                 "Fecha y hora",
-                "Estado"
+                "Estado",
+                "Origen"
             ],
             column_config={
 
@@ -793,6 +806,11 @@ else:
                 "Estado": st.column_config.TextColumn(
                     "Estado",
                     width="medium"
+                ),
+
+                "Origen": st.column_config.TextColumn(
+                    "Origen",
+                    width="small"
                 )
             }
         )
@@ -835,11 +853,11 @@ else:
             </span>
 
             <span style="color:#d00000;font-weight:bold;">
-                Picks modificados manualmente
+                ✏️ Manual: valor editado y guardado
             </span>
 
             <span>
-                Picks calculados automáticamente
+                Automático: valor calculado por productividad
             </span>
 
         </div>
@@ -865,7 +883,8 @@ col2.metric(
 )
 
 st.caption(
-    "Los valores manuales se guardan en rojo. "
-    "Las filas de finalización aparecen en verde claro "
-    "y las de inicio de servicio en azul claro."
+    "Las filas modificadas manualmente se identifican en la columna "
+    "«Origen» como ✏️ Manual. Las demás son Automáticas. "
+    "Las filas de finalización aparecen en verde claro y las de inicio "
+    "de servicio en azul claro."
 )
