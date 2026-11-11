@@ -134,7 +134,7 @@ def obtener_ajustes():
 
 
 # ==========================================================
-# GUARDAR CAMBIOS DE LA TABLA
+# GUARDAR EDICIONES MANUALES
 # ==========================================================
 
 def guardar_ediciones(editor_key):
@@ -150,8 +150,6 @@ def guardar_ediciones(editor_key):
         []
     )
 
-    cambio_servicio_inicial = False
-
     with closing(conectar()) as conn:
 
         with conn:
@@ -165,7 +163,8 @@ def guardar_ediciones(editor_key):
 
                 referencia = referencias[indice]
 
-                # SOLO LA PRIMERA FILA ELIGE EL SERVICIO INICIAL.
+                # El desplegable de la primera fila
+                # determina el servicio inicial.
                 if indice == 0 and "Día de servicio" in valores:
 
                     fecha_elegida = valores["Día de servicio"]
@@ -180,12 +179,10 @@ def guardar_ediciones(editor_key):
                             fecha_elegida.isoformat()
                         )
 
-                        cambio_servicio_inicial = True
-
                     except ValueError:
                         pass
 
-                # Guardar ajustes manuales de picks.
+                # Guardar los cambios manuales de picks.
                 if "Picks restantes" in valores:
 
                     if referencia["estado"] == "Fin de servicio":
@@ -387,7 +384,6 @@ def calcular_planificacion(
 
         fecha_servicio = dia_servicio.isoformat()
 
-        # Cargar los picks del día de servicio elegido.
         saldo = float(
             obtener_servicio(fecha_servicio)
         )
@@ -407,7 +403,6 @@ def calcular_planificacion(
             "Estado": "Inicio de servicio"
         })
 
-        # Servicio vacío.
         if saldo <= 0:
 
             registros.append({
@@ -504,7 +499,6 @@ def calcular_planificacion(
 
         if terminado:
 
-            # El siguiente servicio comienza justo al terminar el anterior.
             dia_servicio += timedelta(days=1)
             servicios_procesados += 1
 
@@ -586,7 +580,7 @@ with col4:
 
 
 # ==========================================================
-# TABLA CON DESPLEGABLE EN LA PRIMERA CELDA
+# TABLA
 # ==========================================================
 
 st.divider()
@@ -603,7 +597,6 @@ if inicio >= final:
 
 else:
 
-    # Opciones disponibles para el desplegable.
     opciones_fechas = []
 
     dia_opcion = fecha_inicio
@@ -616,7 +609,6 @@ else:
 
         dia_opcion += timedelta(days=1)
 
-    # Servicio inicial por defecto.
     if "servicio_inicial" not in st.session_state:
         st.session_state.servicio_inicial = fecha_inicio.isoformat()
 
@@ -630,7 +622,6 @@ else:
     if servicio_visible not in opciones_fechas:
         opciones_fechas.insert(0, servicio_visible)
 
-    # Calcular la planificación con el servicio inicial elegido.
     tabla = calcular_planificacion(
         inicio,
         final,
@@ -659,6 +650,21 @@ else:
                 "estado": fila["Estado"]
             })
 
+        # Identificar las celdas modificadas manualmente.
+        ajustes = obtener_ajustes()
+
+        indices_rojos = set()
+
+        for indice, referencia in enumerate(referencias):
+
+            clave = (
+                referencia["fecha_hora"],
+                referencia["fecha_servicio"]
+            )
+
+            if clave in ajustes:
+                indices_rojos.add(indice)
+
         tabla["Fecha y hora"] = tabla[
             "Fecha y hora"
         ].dt.strftime("%d/%m/%Y %H:%M:%S")
@@ -672,12 +678,27 @@ else:
         ] = referencias
 
         st.markdown(
-            "Selecciona el servicio inicial directamente en la "
-            "primera fila de la columna «Día de servicio»."
+            "Selecciona el servicio inicial en la primera fila. "
+            "Puedes modificar manualmente los picks restantes."
+        )
+
+        # Aplicar color rojo exclusivamente a los saldos manuales.
+        def colorear_picks(columna):
+
+            return [
+                "color: red; font-weight: bold;"
+                if indice in indices_rojos
+                else "color: inherit;"
+                for indice in columna.index
+            ]
+
+        tabla_estilizada = tabla.style.apply(
+            colorear_picks,
+            subset=["Picks restantes"]
         )
 
         st.data_editor(
-            tabla,
+            tabla_estilizada,
             use_container_width=True,
             hide_index=True,
             height=650,
@@ -718,6 +739,16 @@ else:
             }
         )
 
+        st.markdown(
+            '<span style="color:red;font-weight:bold;">'
+            '● Picks modificados manualmente'
+            '</span> &nbsp;&nbsp; '
+            '<span style="color:inherit;">'
+            '● Picks calculados automáticamente'
+            '</span>',
+            unsafe_allow_html=True
+        )
+
 
 # ==========================================================
 # RESUMEN
@@ -738,7 +769,6 @@ col2.metric(
 )
 
 st.caption(
-    "El servicio inicial se selecciona en la primera fila. "
-    "Los siguientes servicios comienzan automáticamente al terminar "
-    "el anterior."
+    "Los valores manuales se guardan y aparecen en rojo. "
+    "Los valores calculados automáticamente aparecen en negro."
 )
