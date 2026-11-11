@@ -71,13 +71,6 @@ def crear_base_datos():
                 )
             """)
 
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS planificacion_horaria (
-                    fecha_hora TEXT PRIMARY KEY,
-                    picks INTEGER DEFAULT 0
-                )
-            """)
-
 
 def obtener_servicio(fecha):
     with closing(conectar()) as conn:
@@ -105,34 +98,6 @@ def guardar_sidebar_servicio(fecha, clave):
         fecha,
         int(st.session_state[clave])
     )
-
-
-def obtener_tiendas_comunes():
-    with closing(conectar()) as conn:
-        filas = conn.execute("""
-            SELECT hora, tiendas
-            FROM carga_tiendas
-        """).fetchall()
-
-    datos = {h: t for h, t in filas}
-
-    for h in range(24):
-        datos.setdefault(h, 0)
-
-    return datos
-
-
-def guardar_tienda_sidebar(hora, clave):
-    valor = int(st.session_state[clave])
-
-    with closing(conectar()) as conn:
-        with conn:
-            conn.execute("""
-                INSERT INTO carga_tiendas (hora, tiendas)
-                VALUES (?, ?)
-                ON CONFLICT(hora)
-                DO UPDATE SET tiendas=excluded.tiendas
-            """, (hora, valor))
 
 
 def obtener_configuracion(clave, defecto):
@@ -176,28 +141,6 @@ def guardar_ajuste(fecha_hora, pendientes):
                 ON CONFLICT(fecha_hora)
                 DO UPDATE SET pendientes=excluded.pendientes
             """, (fecha_hora, pendientes))
-
-
-def obtener_picks_horarios_manuales():
-    with closing(conectar()) as conn:
-        filas = conn.execute("""
-            SELECT fecha_hora, picks
-            FROM planificacion_horaria
-        """).fetchall()
-
-    return {fecha: picks for fecha, picks in filas}
-
-
-def guardar_picks_horarios_manual(fecha_hora, picks):
-    with closing(conectar()) as conn:
-        with conn:
-            conn.execute("""
-                INSERT INTO planificacion_horaria
-                    (fecha_hora, picks)
-                VALUES (?, ?)
-                ON CONFLICT(fecha_hora)
-                DO UPDATE SET picks=excluded.picks
-            """, (fecha_hora, picks))
 
 
 crear_base_datos()
@@ -315,49 +258,7 @@ with st.sidebar.expander(
         )
 
 # ==================================================
-# CARGA DE TIENDAS COMÚN
-# ==================================================
-
-datos_tiendas = obtener_tiendas_comunes()
-
-with st.sidebar.expander(
-    "🏬 CARGA DE TIENDAS POR HORA",
-    expanded=False
-):
-    st.caption("Carga común para todos los días.")
-
-    for hora in range(24):
-        clave = f"tienda_comun_{hora}"
-
-        if clave not in st.session_state:
-            st.session_state[clave] = int(
-                datos_tiendas[hora]
-            )
-
-        st.number_input(
-            f"{hora:02d}:00 h",
-            min_value=0,
-            max_value=100000,
-            step=1,
-            key=clave,
-            on_change=guardar_tienda_sidebar,
-            args=(hora, clave)
-        )
-
-    total_tiendas = sum(
-        int(st.session_state.get(
-            f"tienda_comun_{h}", datos_tiendas[h]
-        ))
-        for h in range(24)
-    )
-
-    st.metric(
-        "Total de tiendas por día",
-        f"{total_tiendas:,}"
-    )
-
-# ==================================================
-# PRODUCTIVIDAD
+# PRODUCTIVIDAD DE LA MÁQUINA
 # ==================================================
 
 st.sidebar.subheader("⚙️ PRODUCTIVIDAD")
@@ -382,7 +283,7 @@ st.sidebar.metric(
     f"{productividad:,} picks/h"
 )
 
-st.sidebar.caption("Gestión de almacén | Versión 2.3")
+st.sidebar.caption("Gestión de almacén | Versión 2.4")
 
 # ==================================================
 # CABECERA
@@ -456,12 +357,13 @@ if fin < inicio:
     st.stop()
 
 # ==================================================
-# CÁLCULO DE LA PREVISIÓN
+# CÁLCULO DE PICKS RESTANTES
 # ==================================================
 
-tiendas = obtener_tiendas_comunes()
 ajustes = obtener_ajustes()
-picks_manuales = obtener_picks_horarios_manuales()
+
+# Empezamos desde las 00:00 del primer día seleccionado
+# para calcular correctamente las horas anteriores al inicio.
 
 momento = datetime.combine(
     inicio.date(),
@@ -476,44 +378,24 @@ fecha_anterior = None
 while momento <= fin:
 
     fecha = momento.date()
-    hora = momento.hour
     fecha_texto = fecha.isoformat()
 
     clave_momento = momento.strftime(
         "%Y-%m-%d %H:%M"
     )
 
-    # Nuevo día: se inicia con el total del servicio.
+    # Al comenzar un nuevo día se carga el total
+    # de picks previsto para ese servicio.
+
     if fecha != fecha_anterior:
         saldo_dia = obtener_servicio(fecha_texto)
         fecha_anterior = fecha
 
-    picks_servicio = obtener_servicio(fecha_texto)
+    # Restamos la productividad de cada hora.
 
-    total_tiendas_dia = sum(tiendas.values())
-    tiendas_hora = int(tiendas[hora])
-
-    # Reparto de los picks según las tiendas.
-    if total_tiendas_dia > 0:
-        picks_por_tienda = (
-            picks_servicio / total_tiendas_dia
-        )
-    else:
-        picks_por_tienda = 0
-
-    picks_calculados = round(
-        picks_por_tienda * tiendas_hora
-    )
-
-    # Si existe un valor manual para esa hora,
-    # utilizamos ese valor en lugar del calculado.
-    if clave_momento in picks_manuales:
-        picks_hora = int(picks_manuales[clave_momento])
-    else:
-        picks_hora = int(picks_calculados)
-
-    # Calculamos los picks restantes del servicio.
     if clave_momento in ajustes:
+        # Si has modificado manualmente esta hora,
+        # utilizamos tu cantidad como nuevo saldo.
         saldo_dia = int(ajustes[clave_momento])
     else:
         saldo_dia = max(
@@ -521,77 +403,51 @@ while momento <= fin:
             0
         )
 
-    registros.append({
-        "fecha_hora": clave_momento,
-        "Fecha y hora": momento.strftime("%d/%m %H:%M"),
-        "Tiendas": tiendas_hora,
-        "Picks por hora": picks_hora,
-        "Picks restantes": int(saldo_dia)
-    })
+    # Guardamos las horas del intervalo solicitado.
+
+    if inicio <= momento <= fin:
+        registros.append({
+            "fecha_hora": clave_momento,
+            "Fecha y hora": momento.strftime("%d/%m %H:%M"),
+            "Picks restantes": int(saldo_dia)
+        })
 
     momento += timedelta(hours=1)
 
 # ==================================================
-# MOSTRAR INTERVALO
+# TABLA PRINCIPAL
 # ==================================================
 
-registros_visibles = [
-    r for r in registros
-    if inicio <= datetime.strptime(
-        r["fecha_hora"], "%Y-%m-%d %H:%M"
-    ) <= fin
-]
-
-if not registros_visibles:
+if not registros:
     st.info("No hay horas que mostrar.")
     st.stop()
 
-st.subheader("📊 PICKS POR HACER")
+st.subheader("📊 PICKS RESTANTES")
 
 st.caption(
-    "Puedes modificar los picks por hora y los picks restantes. "
-    "Los cambios se guardarán para mantener tu planificación."
+    "Puedes modificar manualmente los picks restantes "
+    "de cualquier hora. Los cambios se guardan y sirven "
+    "como punto de partida para las horas posteriores."
 )
 
-df = pd.DataFrame(registros_visibles)
+df = pd.DataFrame(registros)
 
-# Guardamos los valores originales para detectar cambios.
-valores_picks_originales = df["Picks por hora"].tolist()
-valores_restantes_originales = df["Picks restantes"].tolist()
+valores_originales = df["Picks restantes"].tolist()
 
-df_edicion = df[
-    [
-        "Fecha y hora",
-        "Tiendas",
-        "Picks por hora",
-        "Picks restantes"
-    ]
+tabla = df[
+    ["Fecha y hora", "Picks restantes"]
 ].copy()
 
-df_editado = st.data_editor(
-    df_edicion,
+tabla_editada = st.data_editor(
+    tabla,
     use_container_width=True,
     hide_index=True,
     num_rows="fixed",
-    disabled=[
-        "Fecha y hora",
-        "Tiendas"
-    ],
+    disabled=["Fecha y hora"],
     column_config={
         "Fecha y hora": st.column_config.TextColumn(
-            "Fecha y hora"
-        ),
-        "Tiendas": st.column_config.NumberColumn(
-            "Tiendas",
-            format="%d"
-        ),
-        "Picks por hora": st.column_config.NumberColumn(
-            "Picks por hora",
-            min_value=0,
-            max_value=1000000,
-            step=100,
-            format="%d",
-            help="Puedes modificar manualmente los picks previstos para esta hora."
+            "Fecha y hora",
+            width="medium"
         ),
         "Picks restantes": st.column_config.NumberColumn(
             "Picks restantes",
@@ -599,14 +455,14 @@ df_editado = st.data_editor(
             max_value=1000000,
             step=100,
             format="%d",
-            help="Puedes corregir manualmente el total que queda del servicio."
+            help="Puedes modificar manualmente este valor."
         )
     },
     key="tabla_planificacion"
 )
 
 # ==================================================
-# GUARDAR CAMBIOS MANUALES
+# GUARDAR CAMBIOS
 # ==================================================
 
 if st.button(
@@ -614,63 +470,37 @@ if st.button(
     type="primary",
     use_container_width=True
 ):
-    cambios_picks = 0
-    cambios_restantes = 0
 
-    for i, fila in df_editado.iterrows():
+    cambios = 0
 
-        fecha_hora = df.iloc[i]["fecha_hora"]
+    for i, fila in tabla_editada.iterrows():
 
-        nuevo_picks = int(fila["Picks por hora"])
-        original_picks = int(valores_picks_originales[i])
+        nuevo_valor = int(fila["Picks restantes"])
+        valor_original = int(valores_originales[i])
 
-        nuevo_restante = int(fila["Picks restantes"])
-        original_restante = int(valores_restantes_originales[i])
+        if nuevo_valor != valor_original:
 
-        if nuevo_picks != original_picks:
-            guardar_picks_horarios_manual(
-                fecha_hora,
-                nuevo_picks
-            )
-            cambios_picks += 1
+            fecha_hora = df.iloc[i]["fecha_hora"]
 
-        if nuevo_restante != original_restante:
             guardar_ajuste(
                 fecha_hora,
-                nuevo_restante
+                nuevo_valor
             )
-            cambios_restantes += 1
 
-    if cambios_picks > 0 or cambios_restantes > 0:
+            cambios += 1
+
+    if cambios > 0:
         st.success(
-            f"Guardados {cambios_picks} cambios de picks por hora "
-            f"y {cambios_restantes} cambios de picks restantes."
+            f"Se han guardado {cambios} cambios."
         )
 
-        st.session_state.pop("tabla_planificacion", None)
+        st.session_state.pop(
+            "tabla_planificacion",
+            None
+        )
+
         st.rerun()
+
     else:
         st.info("No has realizado ningún cambio.")
 
-# ==================================================
-# RESUMEN
-# ==================================================
-
-st.divider()
-
-st.subheader("📌 Resumen del periodo")
-
-total_previsto = int(df["Picks por hora"].sum())
-ultimo_saldo = int(df["Picks restantes"].iloc[-1])
-
-c1, c2 = st.columns(2)
-
-c1.metric(
-    "Picks previstos en el periodo",
-    f"{total_previsto:,}"
-)
-
-c2.metric(
-    "Picks restantes al finalizar",
-    f"{ultimo_saldo:,}"
-)
