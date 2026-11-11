@@ -17,11 +17,6 @@ st.set_page_config(
 
 DB = "almacen.db"
 
-DIAS_ES = [
-    "Lunes", "Martes", "Miércoles", "Jueves",
-    "Viernes", "Sábado", "Domingo"
-]
-
 # ==================================================
 # BASE DE DATOS
 # ==================================================
@@ -230,8 +225,9 @@ st.markdown("""
 
 if "semana" not in st.session_state:
     hoy = date.today()
-    lunes = hoy - timedelta(days=hoy.weekday())
-    st.session_state.semana = lunes
+    st.session_state.semana = hoy - timedelta(
+        days=hoy.weekday()
+    )
 
 st.sidebar.title("📦 ALMACÉN")
 st.sidebar.caption("Panel de control")
@@ -250,7 +246,7 @@ lunes = fecha_elegida - timedelta(
 
 st.session_state.semana = lunes
 
-# Se muestran los servicios desde el lunes hasta el lunes siguiente.
+# Ocho fechas: lunes hasta el lunes siguiente.
 dias = [
     lunes + timedelta(days=i)
     for i in range(8)
@@ -268,8 +264,13 @@ with st.sidebar.expander(
 
     for dia in dias:
         fecha = dia.isoformat()
-        nombre_dia = DIAS_ES[dia.weekday()]
+        nombre_dia = dia.strftime("%A")
         clave = f"servicio_{fecha}"
+
+        nombres = [
+            "Lunes", "Martes", "Miércoles", "Jueves",
+            "Viernes", "Sábado", "Domingo"
+        ]
 
         if clave not in st.session_state:
             st.session_state[clave] = int(
@@ -277,7 +278,7 @@ with st.sidebar.expander(
             )
 
         st.number_input(
-            f"{nombre_dia} {dia.strftime('%d/%m')}",
+            f"{nombres[dia.weekday()]} {dia.strftime('%d/%m')}",
             min_value=0,
             max_value=1000000,
             step=100,
@@ -287,7 +288,7 @@ with st.sidebar.expander(
         )
 
 # ==================================================
-# CARGA DE TIENDAS POR HORA
+# CARGA DE TIENDAS COMÚN
 # ==================================================
 
 datos_tiendas = obtener_tiendas_comunes()
@@ -329,7 +330,7 @@ with st.sidebar.expander(
     )
 
 # ==================================================
-# PRODUCTIVIDAD DE LA MÁQUINA
+# PRODUCTIVIDAD
 # ==================================================
 
 st.sidebar.subheader("⚙️ PRODUCTIVIDAD")
@@ -354,7 +355,7 @@ st.sidebar.metric(
     f"{productividad:,} picks/h"
 )
 
-st.sidebar.caption("Gestión de almacén | Versión 2.0")
+st.sidebar.caption("Gestión de almacén | Versión 2.1")
 
 # ==================================================
 # CABECERA
@@ -370,10 +371,10 @@ st.caption(
 st.divider()
 
 # ==================================================
-# SELECCIÓN DEL PERIODO
+# SELECCIÓN DE FECHAS Y HORAS
 # ==================================================
 
-st.subheader("📅 Selecciona el periodo que quieres planificar")
+st.subheader("📅 Selecciona el periodo")
 
 col1, col2, col3, col4 = st.columns(4)
 
@@ -422,7 +423,9 @@ fin = datetime.combine(
 ).replace(hour=hora_fin)
 
 if fin < inicio:
-    st.error("La fecha y hora final debe ser posterior a la inicial.")
+    st.error(
+        "La fecha y hora final debe ser posterior a la inicial."
+    )
     st.stop()
 
 # ==================================================
@@ -432,33 +435,30 @@ if fin < inicio:
 tiendas = obtener_tiendas_comunes()
 ajustes = obtener_ajustes()
 
-# Calculamos desde el comienzo de la semana para conservar
-# el saldo acumulado aunque la consulta empiece más tarde.
-
-fecha_calculo = min(
-    inicio.date(),
-    lunes
-)
+# El cálculo comienza desde el lunes para mantener
+# correctamente el saldo acumulado anterior al intervalo.
 
 momento = datetime.combine(
-    fecha_calculo,
+    min(inicio.date(), lunes),
     datetime.min.time()
 )
 
-registros = []
 saldo = 0
+registros = []
 
 while momento <= fin:
 
     fecha = momento.date()
     hora = momento.hour
     fecha_texto = fecha.isoformat()
-    clave_momento = momento.strftime("%Y-%m-%d %H:%M")
+
+    clave_momento = momento.strftime(
+        "%Y-%m-%d %H:%M"
+    )
 
     picks_servicio = obtener_servicio(fecha_texto)
 
     total_tiendas_dia = sum(tiendas.values())
-
     tiendas_hora = int(tiendas[hora])
 
     if total_tiendas_dia > 0:
@@ -472,12 +472,13 @@ while momento <= fin:
         picks_por_tienda * tiendas_hora
     )
 
-    # Saldo acumulado de la hora anterior
+    # Se suman los picks de esta hora y se resta
+    # la productividad de la máquina.
     saldo_calculado = (
         saldo + picks_previstos - productividad
     )
 
-    # Si existe un ajuste manual, sustituye el saldo calculado.
+    # El ajuste manual sustituye el saldo calculado.
     if clave_momento in ajustes:
         saldo = int(ajustes[clave_momento])
     else:
@@ -489,13 +490,13 @@ while momento <= fin:
         "Tiendas": tiendas_hora,
         "Picks previstos": int(picks_previstos),
         "Productividad": int(productividad),
-        "Pendientes": int(saldo)
+        "Picks restantes": int(saldo)
     })
 
     momento += timedelta(hours=1)
 
 # ==================================================
-# MOSTRAR SOLO EL INTERVALO SELECCIONADO
+# MOSTRAR INTERVALO SELECCIONADO
 # ==================================================
 
 registros_visibles = [
@@ -506,21 +507,20 @@ registros_visibles = [
 ]
 
 if not registros_visibles:
-    st.info("No hay horas que mostrar en este intervalo.")
+    st.info("No hay horas que mostrar.")
     st.stop()
 
 st.subheader("📊 PICKS POR HACER")
 
 st.caption(
-    "Los pendientes se acumulan de una hora a otra. "
+    "Los picks restantes se actualizan hora a hora. "
     "Si la máquina produce más de lo previsto, "
     "el adelanto se descuenta de las horas siguientes."
 )
 
 df = pd.DataFrame(registros_visibles)
 
-# Valores calculados originales para detectar modificaciones.
-valores_originales = df["Pendientes"].tolist()
+valores_originales = df["Picks restantes"].tolist()
 
 df_edicion = df[
     [
@@ -528,14 +528,9 @@ df_edicion = df[
         "Tiendas",
         "Picks previstos",
         "Productividad",
-        "Pendientes"
+        "Picks restantes"
     ]
 ].copy()
-
-st.write(
-    "Puedes modificar directamente la columna "
-    "**Pendientes** para ajustar la previsión."
-)
 
 df_editado = st.data_editor(
     df_edicion,
@@ -565,31 +560,33 @@ df_editado = st.data_editor(
             "Productividad",
             format="%d"
         ),
-        "Pendientes": st.column_config.NumberColumn(
-            "Pendientes / adelanto",
+        "Picks restantes": st.column_config.NumberColumn(
+            "Picks restantes",
             format="%d",
-            help="Puedes cambiar este valor manualmente."
+            help="Puedes modificar manualmente los picks restantes."
         )
     },
     key="tabla_planificacion"
 )
 
 # ==================================================
-# GUARDAR AJUSTES MANUALES
+# GUARDAR AJUSTES
 # ==================================================
 
 if st.button(
-    "💾 GUARDAR CAMBIOS DE PENDIENTES",
+    "💾 GUARDAR CAMBIOS",
     type="primary",
     use_container_width=True
 ):
     cambios = 0
 
     for i, fila in df_editado.iterrows():
-        nuevo_valor = int(fila["Pendientes"])
+
+        nuevo_valor = int(fila["Picks restantes"])
         valor_original = int(valores_originales[i])
 
         if nuevo_valor != valor_original:
+
             fecha_hora = df.iloc[i]["fecha_hora"]
 
             guardar_ajuste(
@@ -601,8 +598,7 @@ if st.button(
 
     if cambios > 0:
         st.success(
-            f"Se han guardado {cambios} ajustes. "
-            "La previsión se actualizará con los nuevos saldos."
+            f"Se han guardado {cambios} cambios."
         )
         st.rerun()
     else:
@@ -613,12 +609,13 @@ if st.button(
 # ==================================================
 
 st.divider()
+
 st.subheader("📌 Resumen del periodo")
 
 total_previsto = int(df["Picks previstos"].sum())
-ultimo_saldo = int(df["Pendientes"].iloc[-1])
+ultimo_saldo = int(df["Picks restantes"].iloc[-1])
 
-c1, c2, c3 = st.columns(3)
+c1, c2 = st.columns(2)
 
 c1.metric(
     "Picks previstos en el periodo",
@@ -626,13 +623,6 @@ c1.metric(
 )
 
 c2.metric(
-    "Productividad por hora",
-    f"{productividad:,}"
-)
-
-c3.metric(
-    "Saldo al final del periodo",
-    f"{ultimo_saldo:,}",
-    help="Un saldo positivo indica picks pendientes. "
-         "Uno negativo indica que vas adelantado."
+    "Picks restantes al finalizar",
+    f"{ultimo_saldo:,}"
 )
