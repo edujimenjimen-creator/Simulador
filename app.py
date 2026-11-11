@@ -131,35 +131,20 @@ def obtener_ajustes():
     return {fecha: pendientes for fecha, pendientes in filas}
 
 
-def guardar_ajuste(fecha_hora, pendientes):
-    with closing(conectar()) as conn:
-        with conn:
-            conn.execute("""
-                INSERT INTO ajustes_pendientes
-                    (fecha_hora, pendientes)
-                VALUES (?, ?)
-                ON CONFLICT(fecha_hora)
-                DO UPDATE SET pendientes=excluded.pendientes
-            """, (fecha_hora, pendientes))
-
-
 # ==================================================
-# GUARDADO AUTOMÁTICO DE CELDAS
+# GUARDADO AUTOMÁTICO Y RECÁLCULO
 # ==================================================
 
-def guardar_ediciones_pendientes():
+def guardar_ediciones_pendientes(editor_key):
 
-    estado = st.session_state.get(
-        "tabla_planificacion", {}
-    )
-
+    estado = st.session_state.get(editor_key, {})
     ediciones = estado.get("edited_rows", {})
 
     mapa_filas = st.session_state.get(
         "mapa_filas_planificacion", {}
     )
 
-    cambios = 0
+    cambios = []
 
     for indice, valores in ediciones.items():
 
@@ -167,34 +152,52 @@ def guardar_ediciones_pendientes():
             continue
 
         indice = int(indice)
-
         fecha_hora = mapa_filas.get(indice)
 
         if fecha_hora is None:
             continue
 
-        nuevo_valor = int(
-            valores["Picks restantes"]
-        )
+        nuevo_valor = int(valores["Picks restantes"])
 
-        guardar_ajuste(
-            fecha_hora,
-            nuevo_valor
-        )
+        cambios.append((fecha_hora, nuevo_valor))
 
-        cambios += 1
+    if not cambios:
+        return
 
-    if cambios:
-        st.session_state["mensaje_guardado"] = (
-            f"Se han guardado automáticamente {cambios} cambios."
-        )
+    # Procesamos las modificaciones por orden cronológico.
+    cambios.sort(key=lambda x: x[0])
 
-    # Limpiamos los cambios temporales del editor.
-    # La tabla se reconstruirá con los nuevos saldos.
-    st.session_state.pop(
-        "tabla_planificacion",
-        None
+    with closing(conectar()) as conn:
+        with conn:
+
+            for fecha_hora, nuevo_valor in cambios:
+
+                fecha = fecha_hora[:10]
+
+                # Eliminamos los ajustes posteriores de ese día.
+                # Así las horas siguientes vuelven a calcularse.
+                conn.execute("""
+                    DELETE FROM ajustes_pendientes
+                    WHERE substr(fecha_hora, 1, 10) = ?
+                    AND fecha_hora > ?
+                """, (fecha, fecha_hora))
+
+                # Guardamos el nuevo saldo manual.
+                conn.execute("""
+                    INSERT INTO ajustes_pendientes
+                        (fecha_hora, pendientes)
+                    VALUES (?, ?)
+                    ON CONFLICT(fecha_hora)
+                    DO UPDATE SET pendientes=excluded.pendientes
+                """, (fecha_hora, nuevo_valor))
+
+    st.session_state["mensaje_guardado"] = (
+        "Cambios guardados. Las horas siguientes se han recalculado."
     )
+
+    # Cambiamos la clave del editor para empezar
+    # una edición limpia y evitar reutilizar cambios antiguos.
+    st.session_state["version_tabla"] += 1
 
 
 crear_base_datos()
@@ -251,7 +254,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==================================================
-# SEMANA DE SERVICIO
+# ESTADO INICIAL
 # ==================================================
 
 if "semana" not in st.session_state:
@@ -259,6 +262,13 @@ if "semana" not in st.session_state:
     st.session_state.semana = hoy - timedelta(
         days=hoy.weekday()
     )
+
+if "version_tabla" not in st.session_state:
+    st.session_state.version_tabla = 0
+
+# ==================================================
+# BARRA LATERAL
+# ==================================================
 
 st.sidebar.title("📦 ALMACÉN")
 st.sidebar.caption("Panel de control")
@@ -313,7 +323,7 @@ with st.sidebar.expander(
         )
 
 # ==================================================
-# PRODUCTIVIDAD DE LA MÁQUINA
+# PRODUCTIVIDAD
 # ==================================================
 
 st.sidebar.subheader("⚙️ PRODUCTIVIDAD")
@@ -331,17 +341,14 @@ productividad = st.sidebar.slider(
     key="productividad"
 )
 
-guardar_configuracion(
-    "productividad",
-    productividad
-)
+guardar_configuracion("productividad", productividad)
 
 st.sidebar.metric(
     "Productividad establecida",
     f"{productividad:,} picks/h"
 )
 
-st.sidebar.caption("Gestión de almacén | Versión 2.5")
+st.sidebar.caption("Gestión de almacén | Versión 2.6")
 
 # ==================================================
 # CABECERA
@@ -357,7 +364,7 @@ st.caption(
 st.divider()
 
 # ==================================================
-# SELECCIÓN DEL PERIODO
+# SELECCIÓN DE FECHAS Y HORAS
 # ==================================================
 
 st.subheader("📅 Selecciona el periodo")
@@ -420,8 +427,9 @@ if fin < inicio:
 
 ajustes = obtener_ajustes()
 
-# Calculamos desde las 00:00 del primer día seleccionado.
-# Así se tienen en cuenta las horas anteriores al intervalo.
+# Calculamos desde las 00:00 del primer día.
+# Así también se respetan los ajustes anteriores
+# a la hora inicial seleccionada.
 
 momento = datetime.combine(
     inicio.date(),
@@ -442,12 +450,13 @@ while momento <= fin:
         "%Y-%m-%d %H:%M"
     )
 
-    # Al comenzar un nuevo día se carga el servicio diario.
+    # Cada día empieza con su propio servicio.
     if fecha != fecha_anterior:
         saldo_dia = obtener_servicio(fecha_texto)
         fecha_anterior = fecha
 
-    # Si existe un ajuste manual, prevalece sobre el cálculo.
+    # Si hay un ajuste manual, prevalece.
+    # Si no, se resta la productividad al saldo anterior.
     if clave_momento in ajustes:
         saldo_dia = int(ajustes[clave_momento])
     else:
@@ -459,9 +468,7 @@ while momento <= fin:
     if inicio <= momento <= fin:
         registros.append({
             "fecha_hora": clave_momento,
-            "Fecha y hora": momento.strftime(
-                "%d/%m %H:%M"
-            ),
+            "Fecha y hora": momento.strftime("%d/%m %H:%M"),
             "Picks restantes": int(saldo_dia)
         })
 
@@ -478,16 +485,9 @@ if not registros:
 st.subheader("📊 PICKS RESTANTES")
 
 st.caption(
-    "Modifica cualquier cantidad de picks restantes. "
-    "El cambio se guardará automáticamente y actualizará "
-    "las horas posteriores."
+    "Modifica cualquier cantidad. Las horas posteriores "
+    "se recalcularán automáticamente."
 )
-
-# Mapa que relaciona cada fila con su fecha y hora real.
-st.session_state["mapa_filas_planificacion"] = {
-    i: registro["fecha_hora"]
-    for i, registro in enumerate(registros)
-}
 
 tabla = pd.DataFrame([
     {
@@ -496,6 +496,18 @@ tabla = pd.DataFrame([
     }
     for registro in registros
 ])
+
+# Relación entre cada fila y su fecha/hora.
+st.session_state["mapa_filas_planificacion"] = {
+    i: registro["fecha_hora"]
+    for i, registro in enumerate(registros)
+}
+
+# Clave nueva después de cada edición para limpiar
+# el historial de cambios del editor anterior.
+editor_key = (
+    f"tabla_planificacion_{st.session_state.version_tabla}"
+)
 
 st.data_editor(
     tabla,
@@ -514,15 +526,16 @@ st.data_editor(
             max_value=1000000,
             step=100,
             format="%d",
-            help="Modifica esta cantidad para actualizar las horas siguientes."
+            help="Al cambiar este valor se recalculan las horas posteriores."
         )
     },
-    key="tabla_planificacion",
-    on_change=guardar_ediciones_pendientes
+    key=editor_key,
+    on_change=guardar_ediciones_pendientes,
+    args=(editor_key,)
 )
 
 # ==================================================
-# CONFIRMACIÓN DEL GUARDADO
+# CONFIRMACIÓN
 # ==================================================
 
 if st.session_state.get("mensaje_guardado"):
@@ -538,11 +551,7 @@ st.divider()
 
 st.subheader("📌 Resumen del periodo")
 
-ultimo_saldo = int(
-    registros[-1]["Picks restantes"]
-)
-
 st.metric(
     "Picks restantes al finalizar el periodo",
-    f"{ultimo_saldo:,}"
+    f"{registros[-1]['Picks restantes']:,}"
 )
