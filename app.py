@@ -17,6 +17,11 @@ st.set_page_config(
 
 DB = "almacen.db"
 
+NOMBRES = [
+    "Lunes", "Martes", "Miércoles", "Jueves",
+    "Viernes", "Sábado", "Domingo"
+]
+
 # ==================================================
 # BASE DE DATOS
 # ==================================================
@@ -246,7 +251,6 @@ lunes = fecha_elegida - timedelta(
 
 st.session_state.semana = lunes
 
-# Ocho fechas: lunes hasta el lunes siguiente.
 dias = [
     lunes + timedelta(days=i)
     for i in range(8)
@@ -264,13 +268,7 @@ with st.sidebar.expander(
 
     for dia in dias:
         fecha = dia.isoformat()
-        nombre_dia = dia.strftime("%A")
         clave = f"servicio_{fecha}"
-
-        nombres = [
-            "Lunes", "Martes", "Miércoles", "Jueves",
-            "Viernes", "Sábado", "Domingo"
-        ]
 
         if clave not in st.session_state:
             st.session_state[clave] = int(
@@ -278,7 +276,7 @@ with st.sidebar.expander(
             )
 
         st.number_input(
-            f"{nombres[dia.weekday()]} {dia.strftime('%d/%m')}",
+            f"{NOMBRES[dia.weekday()]} {dia.strftime('%d/%m')}",
             min_value=0,
             max_value=1000000,
             step=100,
@@ -355,7 +353,7 @@ st.sidebar.metric(
     f"{productividad:,} picks/h"
 )
 
-st.sidebar.caption("Gestión de almacén | Versión 2.1")
+st.sidebar.caption("Gestión de almacén | Versión 2.2")
 
 # ==================================================
 # CABECERA
@@ -371,7 +369,7 @@ st.caption(
 st.divider()
 
 # ==================================================
-# SELECCIÓN DE FECHAS Y HORAS
+# SELECCIÓN DEL PERIODO
 # ==================================================
 
 st.subheader("📅 Selecciona el periodo")
@@ -435,16 +433,17 @@ if fin < inicio:
 tiendas = obtener_tiendas_comunes()
 ajustes = obtener_ajustes()
 
-# El cálculo comienza desde el lunes para mantener
-# correctamente el saldo acumulado anterior al intervalo.
-
 momento = datetime.combine(
     min(inicio.date(), lunes),
     datetime.min.time()
 )
 
-saldo = 0
 registros = []
+
+# Saldo independiente para cada día.
+saldo_dia = None
+fecha_anterior = None
+horas_transcurridas = 0
 
 while momento <= fin:
 
@@ -455,6 +454,13 @@ while momento <= fin:
     clave_momento = momento.strftime(
         "%Y-%m-%d %H:%M"
     )
+
+    # Al comenzar un nuevo día se reinicia el saldo
+    # con el total de picks del nuevo servicio.
+    if fecha != fecha_anterior:
+        saldo_dia = obtener_servicio(fecha_texto)
+        horas_transcurridas = 0
+        fecha_anterior = fecha
 
     picks_servicio = obtener_servicio(fecha_texto)
 
@@ -472,17 +478,28 @@ while momento <= fin:
         picks_por_tienda * tiendas_hora
     )
 
-    # Se suman los picks de esta hora y se resta
-    # la productividad de la máquina.
-    saldo_calculado = (
-        saldo + picks_previstos - productividad
+    # Se resta la productividad de la máquina
+    # al total de picks del servicio de ese día.
+    horas_transcurridas += 1
+
+    saldo_calculado = max(
+        picks_servicio - (productividad * horas_transcurridas),
+        0
     )
 
-    # El ajuste manual sustituye el saldo calculado.
+    # Un ajuste manual sustituye el saldo calculado.
+    # Las horas siguientes descuentan productividad
+    # a partir de ese nuevo saldo.
     if clave_momento in ajustes:
-        saldo = int(ajustes[clave_momento])
+        saldo_dia = int(ajustes[clave_momento])
     else:
-        saldo = saldo_calculado
+        if horas_transcurridas == 1:
+            saldo_dia = saldo_calculado
+        else:
+            saldo_dia = max(
+                saldo_dia - productividad,
+                0
+            )
 
     registros.append({
         "fecha_hora": clave_momento,
@@ -490,13 +507,13 @@ while momento <= fin:
         "Tiendas": tiendas_hora,
         "Picks previstos": int(picks_previstos),
         "Productividad": int(productividad),
-        "Picks restantes": int(saldo)
+        "Picks restantes": int(saldo_dia)
     })
 
     momento += timedelta(hours=1)
 
 # ==================================================
-# MOSTRAR INTERVALO SELECCIONADO
+# MOSTRAR INTERVALO
 # ==================================================
 
 registros_visibles = [
@@ -513,9 +530,8 @@ if not registros_visibles:
 st.subheader("📊 PICKS POR HACER")
 
 st.caption(
-    "Los picks restantes se actualizan hora a hora. "
-    "Si la máquina produce más de lo previsto, "
-    "el adelanto se descuenta de las horas siguientes."
+    "Los picks restantes se calculan restando la productividad "
+    "acumulada de la máquina al total de picks del servicio diario."
 )
 
 df = pd.DataFrame(registros_visibles)
@@ -545,8 +561,7 @@ df_editado = st.data_editor(
     ],
     column_config={
         "Fecha y hora": st.column_config.TextColumn(
-            "Fecha y hora",
-            width="medium"
+            "Fecha y hora"
         ),
         "Tiendas": st.column_config.NumberColumn(
             "Tiendas",
@@ -609,7 +624,6 @@ if st.button(
 # ==================================================
 
 st.divider()
-
 st.subheader("📌 Resumen del periodo")
 
 total_previsto = int(df["Picks previstos"].sum())
