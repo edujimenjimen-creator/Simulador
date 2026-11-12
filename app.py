@@ -383,6 +383,37 @@ def siguiente_servicio(fecha_actual, servicios):
 
 
 # ==========================================================
+# PARÓN SEMANAL
+# ==========================================================
+
+def dentro_del_paron_semanal(momento):
+    """Parón desde el sábado a las 22:00 hasta el domingo a las 22:00."""
+
+    hora = momento.time()
+
+    if momento.weekday() == 5 and hora >= time(22, 0):
+        return True
+
+    if momento.weekday() == 6 and hora < time(22, 0):
+        return True
+
+    return False
+
+
+def siguiente_reapertura(momento):
+    """Devuelve el domingo a las 22:00 siguiente al inicio del parón."""
+
+    dias_hasta_domingo = (6 - momento.weekday()) % 7
+    domingo = momento.date() + timedelta(days=dias_hasta_domingo)
+    reapertura = datetime.combine(domingo, time(22, 0))
+
+    if reapertura <= momento:
+        reapertura += timedelta(days=7)
+
+    return reapertura
+
+
+# ==========================================================
 # MOTOR DE PLANIFICACIÓN
 # ==========================================================
 
@@ -551,7 +582,6 @@ def calcular_planificacion(
 
     else:
 
-        # MUY IMPORTANTE:
         # El selector siempre determina el servicio inicial.
         # No se utiliza un ajuste de otro servicio como inicio.
 
@@ -571,6 +601,26 @@ def calcular_planificacion(
     while cursor <= final and eventos < limite_eventos:
 
         eventos += 1
+
+        # Parón semanal: sábado 22:00 -> domingo 22:00.
+        # Durante este intervalo no se descuentan picks.
+        if dentro_del_paron_semanal(cursor):
+
+            cursor = siguiente_reapertura(cursor)
+
+            # Si el servicio ya estaba en marcha, reflejar la
+            # reanudación con el mismo saldo que había al cerrar.
+            if iniciado and cursor <= final:
+                agregar(
+                    cursor,
+                    dia_servicio,
+                    saldo,
+                    "En curso",
+                    AUTO
+                )
+
+            if cursor > final:
+                break
 
         if not iniciado:
 
