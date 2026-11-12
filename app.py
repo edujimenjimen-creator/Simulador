@@ -365,13 +365,8 @@ def guardar_ediciones(editor_key):
                     pendientes
                 ))
 
-    # IMPORTANTE:
-    # No incrementamos version_tabla aquí.
-    # Así conservamos la misma clave del data_editor
-    # y evitamos recrear la tabla tras cada edición manual.
-    #
-    # Streamlit vuelve a ejecutar la aplicación y recalcula
-    # la planificación, los porcentajes y los márgenes.
+    # No incrementamos version_tabla aquí para conservar
+    # la misma clave del data_editor tras una edición manual.
 
 
 # ==========================================================
@@ -1014,34 +1009,43 @@ with col4:
 
 with col5:
 
-    servicios_disponibles = obtener_todos_los_servicios()
+    # Permitir elegir cualquier fecha del periodo,
+    # aunque todavía no tenga picks registrados.
 
-    fechas_servicio = sorted(
-        date.fromisoformat(fecha)
-        for fecha in servicios_disponibles
-    )
+    if fecha_inicio <= fecha_final:
 
-    if fechas_servicio:
-
-        if "servicio_inicial" not in st.session_state:
-
-            st.session_state.servicio_inicial = (
-                fechas_servicio[0].isoformat()
+        fechas_servicio = [
+            fecha_inicio + timedelta(days=i)
+            for i in range(
+                (fecha_final - fecha_inicio).days + 1
             )
+        ]
 
-        actual = date.fromisoformat(
-            st.session_state.servicio_inicial
+        seleccion_actual = st.session_state.get(
+            "selector_servicio_inicial"
         )
 
-        if actual not in fechas_servicio:
-            actual = fechas_servicio[0]
+        if seleccion_actual not in fechas_servicio:
 
-        indice = fechas_servicio.index(actual)
+            servicios_disponibles = obtener_todos_los_servicios()
+
+            fechas_con_picks = [
+                fecha
+                for fecha in fechas_servicio
+                if servicios_disponibles.get(
+                    fecha.isoformat(), 0
+                ) > 0
+            ]
+
+            st.session_state["selector_servicio_inicial"] = (
+                fechas_con_picks[0]
+                if fechas_con_picks
+                else fecha_inicio
+            )
 
         servicio_inicial = st.selectbox(
             "Fecha de servicio inicial",
             options=fechas_servicio,
-            index=indice,
             format_func=lambda d: d.strftime("%d/%m/%Y"),
             key="selector_servicio_inicial"
         )
@@ -1054,8 +1058,9 @@ with col5:
 
         servicio_inicial = None
 
-        st.warning(
-            "Primero introduce picks en el panel lateral."
+        st.info(
+            "La fecha final debe ser igual o posterior "
+            "a la fecha de inicio."
         )
 
 
@@ -1085,7 +1090,17 @@ if inicio >= final:
 elif servicio_inicial is None:
 
     st.warning(
-        "No hay servicios introducidos."
+        "No se puede seleccionar una fecha de servicio "
+        "hasta que el periodo de planificación sea válido."
+    )
+
+elif obtener_servicio(servicio_inicial.isoformat()) <= 0:
+
+    st.warning(
+        f"No hay picks registrados para el día "
+        f"{servicio_inicial.strftime('%d/%m/%Y')}. "
+        "Introduce los picks correspondientes en el panel lateral "
+        "o selecciona otra fecha."
     )
 
 else:
