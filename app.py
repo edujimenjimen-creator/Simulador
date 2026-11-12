@@ -267,6 +267,7 @@ def guardar_productividad():
         st.session_state.productividad
     )
 
+    # La productividad sí provoca una nueva versión de la tabla.
     st.session_state.version_tabla += 1
 
 
@@ -364,7 +365,13 @@ def guardar_ediciones(editor_key):
                     pendientes
                 ))
 
-    st.session_state.version_tabla += 1
+    # IMPORTANTE:
+    # No incrementamos version_tabla aquí.
+    # Así conservamos la misma clave del data_editor
+    # y evitamos recrear la tabla tras cada edición manual.
+    #
+    # Streamlit vuelve a ejecutar la aplicación y recalcula
+    # la planificación, los porcentajes y los márgenes.
 
 
 # ==========================================================
@@ -419,9 +426,12 @@ def siguiente_reapertura(momento):
 # ==========================================================
 
 def calcular_margen(momento_fin, dia_servicio):
-    """Diferencia entre las 20:00 del día de servicio y el fin real."""
 
-    hora_limite = datetime.combine(dia_servicio, time(20, 0))
+    hora_limite = datetime.combine(
+        dia_servicio,
+        time(20, 0)
+    )
+
     diferencia = hora_limite - momento_fin
 
     minutos_totales = int(
@@ -495,7 +505,6 @@ def calcular_planificacion(
 
                 porcentaje_completado = 0.0
 
-            # El margen solo se calcula cuando termina el servicio.
             if estado == "Fin de servicio":
 
                 margen = calcular_margen(
@@ -628,9 +637,6 @@ def calcular_planificacion(
 
     else:
 
-        # El selector siempre determina el servicio inicial.
-        # No se utiliza un ajuste de otro servicio como inicio.
-
         cursor = inicio
         dia_servicio = servicio_inicial
         saldo = obtener_picks(dia_servicio)
@@ -649,13 +655,10 @@ def calcular_planificacion(
         eventos += 1
 
         # Parón semanal: sábado 22:00 -> domingo 22:00.
-        # Durante este intervalo no se descuentan picks.
         if dentro_del_paron_semanal(cursor):
 
             cursor = siguiente_reapertura(cursor)
 
-            # Si el servicio ya estaba en marcha, reflejar la
-            # reanudación con el mismo saldo que había al cerrar.
             if iniciado and cursor <= final:
 
                 agregar(
@@ -670,9 +673,6 @@ def calcular_planificacion(
                 break
 
         if not iniciado:
-
-            # Si no hay picks en esa fecha, buscar el siguiente
-            # servicio que sí tenga picks introducidos.
 
             if saldo <= 0:
 
@@ -750,7 +750,6 @@ def calcular_planificacion(
                 AUTO
             )
 
-            # Buscar el siguiente servicio realmente introducido.
             siguiente = siguiente_servicio(
                 dia_servicio,
                 servicios
@@ -760,15 +759,11 @@ def calcular_planificacion(
                 break
 
             dia_servicio = siguiente
-
             saldo = obtener_picks(dia_servicio)
-
             iniciado = False
 
         else:
 
-            # Si existe un ajuste manual en esta hora exacta,
-            # aplicarlo al servicio correspondiente.
             clave = (
                 cursor.strftime("%Y-%m-%d %H:%M:%S"),
                 dia_servicio.isoformat()
@@ -1329,5 +1324,7 @@ col_b.metric(
 st.caption(
     "La fecha de planificación y la fecha de servicio son "
     "independientes. Cada servicio termina al llegar a cero picks "
-    "y entonces comienza el siguiente servicio introducido."
+    "y entonces comienza el siguiente servicio introducido. "
+    "El almacén permanece cerrado desde el sábado a las 22:00 "
+    "hasta el domingo a las 22:00."
 )
