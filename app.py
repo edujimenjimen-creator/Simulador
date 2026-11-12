@@ -415,18 +415,10 @@ def calcular_planificacion(
                 estado
             )
 
-            # Picks originales del servicio.
             picks_iniciales = obtener_picks(servicio)
+            picks_restantes = max(0, int(round(saldo)))
 
-            # Picks restantes en este momento.
-            picks_restantes = max(
-                0,
-                int(round(saldo))
-            )
-
-            # Porcentaje completado del servicio.
             if picks_iniciales > 0:
-
                 porcentaje_completado = (
                     (picks_iniciales - picks_restantes)
                     / picks_iniciales
@@ -436,9 +428,7 @@ def calcular_planificacion(
                     0.0,
                     min(100.0, porcentaje_completado)
                 )
-
             else:
-
                 porcentaje_completado = 0.0
 
             registros[clave] = {
@@ -561,7 +551,10 @@ def calcular_planificacion(
 
     else:
 
-        # El selector determina el servicio inicial.
+        # MUY IMPORTANTE:
+        # El selector siempre determina el servicio inicial.
+        # No se utiliza un ajuste de otro servicio como inicio.
+
         cursor = inicio
         dia_servicio = servicio_inicial
         saldo = obtener_picks(dia_servicio)
@@ -1118,7 +1111,7 @@ else:
 
                 "Día de servicio": st.column_config.TextColumn(
                     "Día de servicio",
-                    width="medium"
+                    width="small"
                 ),
 
                 "Picks restantes": st.column_config.NumberColumn(
@@ -1127,19 +1120,19 @@ else:
                     max_value=1000000,
                     step=1,
                     format="%d",
-                    width="medium"
+                    width="small"
                 ),
 
                 "Servicio completado (%)": st.column_config.NumberColumn(
                     "Servicio completado (%)",
                     format="%.1f%%",
-                    width="medium",
+                    width="small",
                     help="Porcentaje completado respecto a los picks iniciales de ese servicio."
                 ),
 
                 "Estado": st.column_config.TextColumn(
                     "Estado",
-                    width="medium"
+                    width="small"
                 ),
 
                 "Origen": st.column_config.TextColumn(
