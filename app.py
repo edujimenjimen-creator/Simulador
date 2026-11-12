@@ -267,7 +267,6 @@ def guardar_productividad():
         st.session_state.productividad
     )
 
-    # La productividad sí provoca una nueva versión de la tabla.
     st.session_state.version_tabla += 1
 
 
@@ -316,7 +315,6 @@ def guardar_ediciones(editor_key):
 
     if ediciones:
 
-        # La edición más temprana se convierte en el nuevo ancla.
         ediciones.sort(key=lambda x: x[0])
 
         fecha_hora, fecha_servicio, pendientes = ediciones[0]
@@ -326,7 +324,6 @@ def guardar_ediciones(editor_key):
             "%Y-%m-%d %H:%M:%S"
         )
 
-        # Conservar todas las filas anteriores a la editada.
         if plan_anterior is not None and not plan_anterior.empty:
 
             prefijo = plan_anterior[
@@ -338,7 +335,6 @@ def guardar_ediciones(editor_key):
         with closing(conectar()) as conn:
             with conn:
 
-                # Eliminar el tramo posterior.
                 conn.execute("""
                     DELETE FROM planificacion_congelada
                     WHERE fecha_hora >= ?
@@ -349,7 +345,6 @@ def guardar_ediciones(editor_key):
                     WHERE fecha_hora >= ?
                 """, (fecha_hora,))
 
-                # Guardar el valor en su fecha y hora real.
                 conn.execute("""
                     INSERT INTO ajustes_planificacion (
                         fecha_hora,
@@ -364,9 +359,6 @@ def guardar_ediciones(editor_key):
                     fecha_servicio,
                     pendientes
                 ))
-
-    # No incrementamos version_tabla aquí para conservar
-    # la misma clave del data_editor tras una edición manual.
 
 
 # ==========================================================
@@ -390,7 +382,6 @@ def siguiente_servicio(fecha_actual, servicios):
 # ==========================================================
 
 def dentro_del_paron_semanal(momento):
-    """Parón desde el sábado a las 22:00 hasta el domingo a las 22:00."""
 
     hora = momento.time()
 
@@ -404,7 +395,6 @@ def dentro_del_paron_semanal(momento):
 
 
 def siguiente_reapertura(momento):
-    """Devuelve el domingo a las 22:00 siguiente al inicio del parón."""
 
     dias_hasta_domingo = (6 - momento.weekday()) % 7
     domingo = momento.date() + timedelta(days=dias_hasta_domingo)
@@ -616,7 +606,13 @@ def calcular_planificacion(
     # PUNTO DE PARTIDA
     # ------------------------------------------------------
 
-    if ancla and inicio <= ancla[0] <= final:
+    # Un ajuste manual solo puede ser el punto de partida
+    # si pertenece al mismo día de servicio seleccionado.
+    if (
+        ancla
+        and ancla[1] == servicio_inicial
+        and inicio <= ancla[0] <= final
+    ):
 
         cursor, dia_servicio, saldo = ancla
 
@@ -695,7 +691,6 @@ def calcular_planificacion(
         if cursor >= final:
             break
 
-        # Siguiente hora exacta.
         siguiente_hora = (
             cursor.replace(
                 minute=0,
@@ -704,7 +699,6 @@ def calcular_planificacion(
             ) + timedelta(hours=1)
         )
 
-        # Momento en el que terminarían los picks.
         hora_fin = cursor + timedelta(
             seconds=saldo / productividad * 3600
         )
@@ -826,14 +820,8 @@ if "productividad" not in st.session_state:
     )
 
 if "servicio_inicial" not in st.session_state:
-    st.session_state.servicio_inicial = date.today().isoformat()
 
-# Inicializar el calendario independiente de fecha de servicio.
-# No depende de las fechas registradas en la base de datos.
-if "selector_servicio_inicial" not in st.session_state:
-    st.session_state.selector_servicio_inicial = date.fromisoformat(
-        st.session_state.servicio_inicial
-    )
+    st.session_state.servicio_inicial = date.today().isoformat()
 
 
 # ==========================================================
@@ -1015,21 +1003,14 @@ with col4:
 
 with col5:
 
-    # CALENDARIO INDEPENDIENTE:
-    # Permite elegir cualquier fecha, incluso anterior
-    # a la fecha de inicio de la planificación y aunque
-    # no tenga picks registrados.
-
     servicio_inicial = st.date_input(
         "Fecha de servicio inicial",
-        value=st.session_state.selector_servicio_inicial,
+        value=date.fromisoformat(st.session_state.servicio_inicial),
         format="DD/MM/YYYY",
         key="selector_servicio_inicial"
     )
 
-    st.session_state.servicio_inicial = (
-        servicio_inicial.isoformat()
-    )
+    st.session_state.servicio_inicial = servicio_inicial.isoformat()
 
 
 # ==========================================================
