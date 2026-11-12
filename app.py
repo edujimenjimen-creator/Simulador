@@ -826,8 +826,14 @@ if "productividad" not in st.session_state:
     )
 
 if "servicio_inicial" not in st.session_state:
-
     st.session_state.servicio_inicial = date.today().isoformat()
+
+# Inicializar el calendario independiente de fecha de servicio.
+# No depende de las fechas registradas en la base de datos.
+if "selector_servicio_inicial" not in st.session_state:
+    st.session_state.selector_servicio_inicial = date.fromisoformat(
+        st.session_state.servicio_inicial
+    )
 
 
 # ==========================================================
@@ -1009,59 +1015,21 @@ with col4:
 
 with col5:
 
-    # Permitir elegir cualquier fecha del periodo,
-    # aunque todavía no tenga picks registrados.
+    # CALENDARIO INDEPENDIENTE:
+    # Permite elegir cualquier fecha, incluso anterior
+    # a la fecha de inicio de la planificación y aunque
+    # no tenga picks registrados.
 
-    if fecha_inicio <= fecha_final:
+    servicio_inicial = st.date_input(
+        "Fecha de servicio inicial",
+        value=st.session_state.selector_servicio_inicial,
+        format="DD/MM/YYYY",
+        key="selector_servicio_inicial"
+    )
 
-        fechas_servicio = [
-            fecha_inicio + timedelta(days=i)
-            for i in range(
-                (fecha_final - fecha_inicio).days + 1
-            )
-        ]
-
-        seleccion_actual = st.session_state.get(
-            "selector_servicio_inicial"
-        )
-
-        if seleccion_actual not in fechas_servicio:
-
-            servicios_disponibles = obtener_todos_los_servicios()
-
-            fechas_con_picks = [
-                fecha
-                for fecha in fechas_servicio
-                if servicios_disponibles.get(
-                    fecha.isoformat(), 0
-                ) > 0
-            ]
-
-            st.session_state["selector_servicio_inicial"] = (
-                fechas_con_picks[0]
-                if fechas_con_picks
-                else fecha_inicio
-            )
-
-        servicio_inicial = st.selectbox(
-            "Fecha de servicio inicial",
-            options=fechas_servicio,
-            format_func=lambda d: d.strftime("%d/%m/%Y"),
-            key="selector_servicio_inicial"
-        )
-
-        st.session_state.servicio_inicial = (
-            servicio_inicial.isoformat()
-        )
-
-    else:
-
-        servicio_inicial = None
-
-        st.info(
-            "La fecha final debe ser igual o posterior "
-            "a la fecha de inicio."
-        )
+    st.session_state.servicio_inicial = (
+        servicio_inicial.isoformat()
+    )
 
 
 # ==========================================================
@@ -1085,13 +1053,6 @@ if inicio >= final:
     st.error(
         "La fecha y hora final deben ser posteriores "
         "a la fecha y hora inicial."
-    )
-
-elif servicio_inicial is None:
-
-    st.warning(
-        "No se puede seleccionar una fecha de servicio "
-        "hasta que el periodo de planificación sea válido."
     )
 
 elif obtener_servicio(servicio_inicial.isoformat()) <= 0:
