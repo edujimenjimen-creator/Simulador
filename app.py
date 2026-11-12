@@ -26,6 +26,7 @@ COLUMNAS = [
     "Día de servicio",
     "Picks restantes",
     "Servicio completado (%)",
+    "Margen hasta las 20:00",
     "Estado",
     "Origen"
 ]
@@ -414,6 +415,35 @@ def siguiente_reapertura(momento):
 
 
 # ==========================================================
+# CÁLCULO DEL MARGEN HASTA LAS 20:00
+# ==========================================================
+
+def calcular_margen(momento_fin, dia_servicio):
+    """Diferencia entre las 20:00 del día de servicio y el fin real."""
+
+    hora_limite = datetime.combine(dia_servicio, time(20, 0))
+    diferencia = hora_limite - momento_fin
+
+    minutos_totales = int(
+        (abs(diferencia.total_seconds()) + 30) // 60
+    )
+
+    horas, minutos = divmod(minutos_totales, 60)
+
+    if diferencia.total_seconds() > 0:
+        signo = "+"
+    elif diferencia.total_seconds() < 0:
+        signo = "-"
+    else:
+        signo = ""
+
+    if horas > 0:
+        return f"{signo}{horas} h {minutos} min"
+
+    return f"{signo}{minutos} min"
+
+
+# ==========================================================
 # MOTOR DE PLANIFICACIÓN
 # ==========================================================
 
@@ -450,6 +480,7 @@ def calcular_planificacion(
             picks_restantes = max(0, int(round(saldo)))
 
             if picks_iniciales > 0:
+
                 porcentaje_completado = (
                     (picks_iniciales - picks_restantes)
                     / picks_iniciales
@@ -459,8 +490,22 @@ def calcular_planificacion(
                     0.0,
                     min(100.0, porcentaje_completado)
                 )
+
             else:
+
                 porcentaje_completado = 0.0
+
+            # El margen solo se calcula cuando termina el servicio.
+            if estado == "Fin de servicio":
+
+                margen = calcular_margen(
+                    momento,
+                    servicio
+                )
+
+            else:
+
+                margen = ""
 
             registros[clave] = {
                 "Fecha y hora": momento,
@@ -469,6 +514,7 @@ def calcular_planificacion(
                 "Servicio completado (%)": round(
                     porcentaje_completado, 1
                 ),
+                "Margen hasta las 20:00": margen,
                 "Estado": estado,
                 "Origen": origen
             }
@@ -611,6 +657,7 @@ def calcular_planificacion(
             # Si el servicio ya estaba en marcha, reflejar la
             # reanudación con el mismo saldo que había al cerrar.
             if iniciado and cursor <= final:
+
                 agregar(
                     cursor,
                     dia_servicio,
@@ -1129,12 +1176,37 @@ else:
                 for i in columna.index
             ]
 
+        def colorear_margen(columna):
+
+            estilos = []
+
+            for valor in columna:
+
+                if isinstance(valor, str) and valor.startswith("+"):
+                    estilos.append(
+                        "background-color:#e8f5e9;color:#246b35;font-weight:bold;"
+                    )
+
+                elif isinstance(valor, str) and valor.startswith("-"):
+                    estilos.append(
+                        "background-color:#fdeaea;color:#a83232;font-weight:bold;"
+                    )
+
+                else:
+                    estilos.append("")
+
+            return estilos
+
         tabla_estilizada = (
             tabla_vista.style
             .apply(colorear_filas, axis=1)
             .apply(
                 colorear_picks,
                 subset=["Picks restantes"]
+            )
+            .apply(
+                colorear_margen,
+                subset=["Margen hasta las 20:00"]
             )
         )
 
@@ -1149,6 +1221,7 @@ else:
             disabled=[
                 "Fecha y hora",
                 "Servicio completado (%)",
+                "Margen hasta las 20:00",
                 "Estado",
                 "Origen"
             ],
@@ -1180,6 +1253,12 @@ else:
                     help="Porcentaje completado respecto a los picks iniciales de ese servicio."
                 ),
 
+                "Margen hasta las 20:00": st.column_config.TextColumn(
+                    "Margen hasta las 20:00",
+                    width="small",
+                    help="Tiempo de adelanto o retraso respecto a las 20:00 del día de servicio."
+                ),
+
                 "Estado": st.column_config.TextColumn(
                     "Estado",
                     width="small"
@@ -1207,6 +1286,14 @@ else:
 
           <span style="background:#d9f2df;padding:4px 8px;">
             Fin de servicio
+          </span>
+
+          <span style="background:#e8f5e9;padding:4px 8px;">
+            Adelanto
+          </span>
+
+          <span style="background:#fdeaea;padding:4px 8px;">
+            Retraso
           </span>
 
           <span style="color:#d00000;font-weight:bold;">
