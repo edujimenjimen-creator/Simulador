@@ -25,6 +25,7 @@ COLUMNAS = [
     "Fecha y hora",
     "Día de servicio",
     "Picks restantes",
+    "Servicio completado (%)",
     "Estado",
     "Origen"
 ]
@@ -414,10 +415,39 @@ def calcular_planificacion(
                 estado
             )
 
+            # Picks originales del servicio.
+            picks_iniciales = obtener_picks(servicio)
+
+            # Picks restantes en este momento.
+            picks_restantes = max(
+                0,
+                int(round(saldo))
+            )
+
+            # Porcentaje completado del servicio.
+            if picks_iniciales > 0:
+
+                porcentaje_completado = (
+                    (picks_iniciales - picks_restantes)
+                    / picks_iniciales
+                ) * 100
+
+                porcentaje_completado = max(
+                    0.0,
+                    min(100.0, porcentaje_completado)
+                )
+
+            else:
+
+                porcentaje_completado = 0.0
+
             registros[clave] = {
                 "Fecha y hora": momento,
                 "Día de servicio": servicio.strftime("%d/%m/%Y"),
-                "Picks restantes": max(0, int(round(saldo))),
+                "Picks restantes": picks_restantes,
+                "Servicio completado (%)": round(
+                    porcentaje_completado, 1
+                ),
                 "Estado": estado,
                 "Origen": origen
             }
@@ -531,10 +561,7 @@ def calcular_planificacion(
 
     else:
 
-        # MUY IMPORTANTE:
-        # El selector siempre determina el servicio inicial.
-        # No se utiliza un ajuste de otro servicio como inicio.
-
+        # El selector determina el servicio inicial.
         cursor = inicio
         dia_servicio = servicio_inicial
         saldo = obtener_picks(dia_servicio)
@@ -1078,6 +1105,7 @@ else:
             args=(editor_key,),
             disabled=[
                 "Fecha y hora",
+                "Servicio completado (%)",
                 "Estado",
                 "Origen"
             ],
@@ -1100,6 +1128,13 @@ else:
                     step=1,
                     format="%d",
                     width="medium"
+                ),
+
+                "Servicio completado (%)": st.column_config.NumberColumn(
+                    "Servicio completado (%)",
+                    format="%.1f%%",
+                    width="medium",
+                    help="Porcentaje completado respecto a los picks iniciales de ese servicio."
                 ),
 
                 "Estado": st.column_config.TextColumn(
